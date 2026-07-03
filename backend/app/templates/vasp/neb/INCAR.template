@@ -1,0 +1,14 @@
+SYSTEM = {{ project_name }} neb
+PREC = Accurate
+ENCUT = 450
+ISMEAR = 0
+SIGMA = 0.05
+NSW = 100
+IBRION = 3
+POTIM = 0.01
+LCLIMB = .TRUE.
+IMAGES = 3
+SPRING = -5
+IOPT = 1
+LCHARG = .FALSE.
+LWAVE = .FALSE.

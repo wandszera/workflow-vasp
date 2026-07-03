@@ -1,0 +1,6 @@
+XXX                          ! Comment line 
+0                            ! Automatic Generation scheme
+GAMMA                        ! Generate a Gamma-Point Centered Grid 
+1  1  1                      ! Subdivisions N_1, N_2, and N_3 (K-mesh) 
+0.0 0.0 0.0                  ! optional shift of the mesh
+EOF 

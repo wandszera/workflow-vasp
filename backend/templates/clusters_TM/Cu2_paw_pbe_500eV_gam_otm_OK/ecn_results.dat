@@ -1,0 +1,20 @@
+   1   2  2.2162
+   2   1  2.2162
+Atom weighted average bond length (Awabl)
+  1  2.2162  2.2162  0.0000
+  2  2.2162  2.2162  0.0000
+Total weigthed average bond length =  2.2162
+
+
+Atom   1 wabl    bl      wecn
+   1   2  2.2162  2.2162  1.0000  0.0000
+ECN =  1.0000
+
+Atom   2 wabl    bl      wecn
+   2   1  2.2162  2.2162  1.0000  0.0000
+ECN =  1.0000
+
+   1  1.0000
+   2  1.0000
+
+  2.0000   2  Total average ECN =  1.0000

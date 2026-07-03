@@ -1,0 +1,12 @@
+k-points along high symmetry lines
+20
+Line-mode
+Reciprocal
+0.0 0.0 0.0 ! Gamma
+0.5 0.0 0.0 ! X
+
+0.5 0.0 0.0 ! X
+0.5 0.5 0.0 ! W
+
+0.5 0.5 0.0 ! W
+0.0 0.5 0.0 ! L

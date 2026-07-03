@@ -1,0 +1,47 @@
+# Python bytecode / cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ipynb_checkpoints/
+
+# Environments
+.env/
+env/
+.venv/
+venv/
+ENV/
+ipython_log.py
+
+# Project configuration & secrets (contains SSH/SLURM details)
+backend/app/data/cluster_config.json
+
+# SQLite databases & temp files
+backend/app/data/workflows.db
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+
+# Runs & generated outputs (local/remote calculations)
+backend/app/mock_runs/
+backend/app/mlff_runs/
+backend/app/remote_runs/
+
+# IDE / Editor configuration
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db

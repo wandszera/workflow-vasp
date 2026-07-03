@@ -1,0 +1,7 @@
+{
+  "ssh_host": "cluster.example.org",
+  "ssh_user": "researcher",
+  "remote_base_dir": "/scratch/vasp-workflows",
+  "dry_run": true,
+  "identity_file": null
+}
