@@ -1,98 +1,75 @@
-# Workflow VASP AI Assistant
+# Workflow VASP - Backend Services
 
-MVP de um agente especialista em workflows de DFT com VASP. O foco desta primeira versao e reduzir intervencao manual em calculos recorrentes:
+Este diretório contém a API e os serviços em Python que orquestram os workflows do VASP.
 
-- inspecionar diretorios de calculo
-- detectar convergencia e falhas comuns
-- sugerir ou aplicar correcoes em `INCAR`
-- organizar o proximo passo de um workflow
+> [!NOTE]
+> Para obter uma visão geral do sistema, descrição completa de funcionalidades (como ECN, Binding Energy, recomendador adaptativo) e capturas dos Dashboards, consulte o [README.md principal da raiz](../../README.md).
 
-## Escopo do MVP
+---
 
-Este MVP implementa:
+## 🛠️ Instalação e Execução
 
-- API com FastAPI
-- parser basico de `OUTCAR`, `OSZICAR` e `INCAR`
-- agente especialista com regras heuristicas
-- base de conhecimento em JSON para erros comuns do VASP
-- simulador local de jobs para desenvolvimento sem cluster
+### Pré-requisitos
+* Python 3.10 ou superior.
 
-## Estrutura
+### 1. Criar Ambiente Virtual e Instalar Dependências
+```bash
+# Criar o ambiente virtual (.venv)
+python -m venv .venv
 
-```text
-backend/
-  app/
-    data/
-    services/
-    main.py
-    schemas.py
-  tests/
+# Ativar o ambiente virtual
+# No Windows (PowerShell):
+.venv\Scripts\Activate.ps1
+# No Linux/macOS:
+source .venv/bin/activate
+
+# Instalar pacotes requeridos
+pip install -r requirements.txt
 ```
 
-## Como rodar
+### 2. Iniciar o Servidor de Desenvolvimento
+```bash
+# Inicia a API com recarregamento automático ao alterar arquivos
+uvicorn app.main:app --reload
+```
+Acesse a documentação interativa dos endpoints (Swagger) em:
+* [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+
+---
+
+## ⚙️ Configuração do Cluster SSH/SLURM
+
+Para utilizar o executor `ssh_slurm` real ou em modo de simulação local (`dry-run`), crie o arquivo de configurações em `app/data/cluster_config.json`. 
+
+Você pode copiar a estrutura a partir do arquivo modelo `app/data/cluster_config.example.json`:
+
+```json
+{
+  "ssh_host": "meu.cluster.br",
+  "ssh_user": "usuario_ssh",
+  "remote_base_dir": "/scratch/usuario_ssh/vasp-workflows",
+  "dry_run": true,
+  "identity_file": "C:/Users/usuario/.ssh/id_rsa"
+}
+```
+
+### Detalhes das propriedades:
+* `dry_run` (Padrão: `true`): Quando ativado, simula a montagem do script SLURM e gera arquivos locais com os comandos planejados (`REMOTE_PLAN.txt` e `submit_vasp.slurm`), sem efetuar conexões SSH. Altere para `false` para submissão real.
+* `identity_file` (Opcional): Caminho absoluto para a chave privada SSH usada na autenticação.
+* **Autenticação por Senha:** Se sua chave necessitar de senha ou o cluster utilizar senha padrão, envie a senha temporária através da rota `POST /cluster/session-password` ou utilize o painel `/cluster` no frontend. Esta senha permanece apenas em memória durante a sessão atual do FastAPI.
+
+---
+
+## 🧪 Testes Automatizados
+
+A suíte de testes valida as regras do agente de decisão, parsers e orquestrador de workflows:
 
 ```bash
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-uvicorn backend.app.main:app --reload
+# Executar todos os testes usando pytest a partir da pasta /backend
+pytest tests/
 ```
 
-## Endpoint principal
-
-`POST /agent/inspect`
-
-Exemplo de payload:
-
-```json
-{
-  "calc_path": "C:/dados/projeto/pd_h2/run_01",
-  "apply_fixes": false,
-  "goal": "otimizacao geometrica seguida por DOS"
-}
+Para visualizar mensagens detalhadas e prints durante a execução dos testes:
+```bash
+pytest -s -v tests/
 ```
-
-## Desenvolvimento sem cluster
-
-Voce pode desenvolver o projeto inteiro sem SSH e sem VASP real usando o simulador local.
-
-### 1. Criar um job falso
-
-`POST /mock/jobs`
-
-```json
-{
-  "project_name": "pd_h2_adsorption",
-  "scenario": "zbrent_error",
-  "goal": "otimizacao geometrica seguida por DOS"
-}
-```
-
-Esse endpoint cria um diretorio local em `backend/app/mock_runs/` com arquivos `INCAR`, `OUTCAR` e `OSZICAR` simulados.
-
-### 2. Inspecionar com o agente
-
-Pegue o `calc_path` retornado e envie para `POST /agent/inspect`.
-
-### 3. Simular reexecucao
-
-Para cenarios como `running` e `zbrent_error`, use:
-
-`POST /mock/jobs/{job_id}/advance`
-
-Isso avanca o estado do job falso para a proxima etapa, como se tivesse ocorrido uma nova submissao ou a convergencia do calculo.
-
-### Cenarios disponiveis
-
-- `success`: calculo convergido
-- `running`: calculo em andamento no primeiro passo e convergido no segundo
-- `zbrent_error`: falha numerica no primeiro passo e convergencia no segundo
-- `dos_ready`: calculo pronto para testar encadeamento de DOS
-
-## Proximos passos sugeridos
-
-- integrar SLURM com `submit_job()`
-- persistir workflows em SQLite/Postgres
-- adicionar fila com Celery/RQ
-- criar templates por tipo de calculo
-- acoplar frontend para acompanhar status
