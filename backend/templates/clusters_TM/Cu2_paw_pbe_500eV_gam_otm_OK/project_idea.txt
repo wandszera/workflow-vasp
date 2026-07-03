@@ -1,0 +1,26 @@
+Título:
+Estudo Computacional da formação de nanoligas CuTM (TM = 30 elementos da tabela periódica) e 
+predição de propriedades ópticas
+
+Ideia: 
+Estudar via DFT, com o código computacional VASP, nanoclusters de Cobre (Cu) com 38 átomos.
+Focar apenas em um tamanho, 38 átomos, e na estrutura já reportada e consagrada na literatura 
+como a mais estável, ou seja, o octaedro.
+A justificativa para o tamanho está relacionada a estabilidade do sistema e também pelo 
+fato de que 38 átomos representa um tamanho não muito pequeno, mas também, não muito 
+grande para cálculos computacionais. Além do fato de permitir a configuração com caroço e 
+superfície.
+A justificativa para usarmos Cobre, está relacionada ao fato de ser um metal de transição 
+com baixo custo comercial, em comparação com Pt e Au, por exemplo. 
+Para determinar preferências por ligas, focar em Cu37TM1, estudando esse átomos de TM nos 
+três diferentes sítios possíveis da estrutura. Apontando assim, quais combinações de CuTM 
+são possíveis para nanoligas. 
+Uma vez tendo essa informação, estudar Cu32TM6, que é a configuração core-shell possível.
+Tendo isso bem estabelecido, usando o OCTOPUS, reotimizar e aplicar TDDFT, para obtenção 
+do espectro óptico de absorção. 
+
+Outras possibilidades:
+Estudar as propriedades estruturais e ópticas de clusters + fragmentos de nanotubos. 
+
+Questões:
+Influência do tamanho no custo computacional.

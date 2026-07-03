@@ -1,0 +1,41 @@
+[
+  {
+    "error": "ZBRENT fatal error",
+    "triggers": ["zbrent: fatal error"],
+    "actions": [
+      {
+        "description": "Reduzir POTIM e avaliar IBRION=1 para estabilizar a relaxacao.",
+        "updates": {
+          "POTIM": "0.15",
+          "IBRION": "1"
+        }
+      }
+    ]
+  },
+  {
+    "error": "Sub-space matrix is not hermitian",
+    "triggers": ["sub-space-matrix is not hermitian"],
+    "actions": [
+      {
+        "description": "Trocar ALGO para Normal e reduzir agressividade numerica.",
+        "updates": {
+          "ALGO": "Normal"
+        }
+      }
+    ]
+  },
+  {
+    "error": "BRMIX mixing instability",
+    "triggers": ["brmix", "very serious problems"],
+    "actions": [
+      {
+        "description": "Ajustar mistura eletronica usando AMIX/BMIX menores e ALGO=Normal.",
+        "updates": {
+          "ALGO": "Normal",
+          "AMIX": "0.2",
+          "BMIX": "0.0001"
+        }
+      }
+    ]
+  }
+]

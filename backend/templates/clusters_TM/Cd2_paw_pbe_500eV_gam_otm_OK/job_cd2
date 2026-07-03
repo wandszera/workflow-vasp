@@ -1,0 +1,10 @@
+#!/bin/bash
+#
+#$ -cwd
+#$ -j y
+#$ -S /bin/bash
+#$ -pe orte 8
+#$ -l h_rt=0578:00:00
+#
+
+mpirun -np 8 /home/jade/bin/vasp_gam

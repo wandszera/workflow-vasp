@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Workflow VASP Cluster</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body data-page="cluster">
+  <div class="background-orb background-orb-one"></div>
+  <div class="background-orb background-orb-two"></div>
+  <div class="page-shell">
+    <header class="hero">
+      <div class="hero-copy-block">
+        <p class="eyebrow">Workflow VASP Assistant</p>
+        <h1>Conexao com o cluster</h1>
+        <p class="hero-copy">
+          Centralize a configuracao SSH/SLURM, valide o alvo remoto e acompanhe a fila do cluster
+          em uma pagina dedicada ao ambiente de execucao.
+        </p>
+        <div class="hero-highlights">
+          <span class="pill">SSH target</span>
+          <span class="pill">dry-run ou remoto real</span>
+          <span class="pill">fila SLURM</span>
+        </div>
+        <nav class="page-nav">
+          <a class="nav-link" href="/">Workflow</a>
+          <a class="nav-link" href="/analysis">Analises</a>
+          <a class="nav-link active" href="/cluster">Cluster</a>
+        </nav>
+      </div>
+      <div class="hero-card">
+        <div class="hero-card-top">
+          <p class="metric-label">SSH Target</p>
+          <span class="hero-status-dot"></span>
+        </div>
+        <p class="metric-value metric-value-compact" id="cluster-target">-</p>
+        <p class="metric-note" id="cluster-mode-note">Carregando configuracao do cluster...</p>
+        <div class="hero-card-divider"></div>
+        <p class="hero-card-copy">
+          Ajuste a conexao uma vez e reutilize o mesmo backend para preparar dry-runs ou submissao remota.
+        </p>
+      </div>
+    </header>
+
+    <main class="cluster-layout">
+      <section class="panel form-panel">
+        <div class="panel-heading">
+          <h2>Configuracao SSH/SLURM</h2>
+          <p>Defina o alvo remoto que sera usado pelo executor `ssh_slurm`.</p>
+        </div>
+
+        <form id="cluster-config-form">
+          <label>
+            Host SSH
+            <input type="text" name="ssh_host" placeholder="cluster.example.org" required>
+          </label>
+
+          <label>
+            Usuario SSH
+            <input type="text" name="ssh_user" placeholder="researcher" required>
+          </label>
+
+          <label>
+            Diretorio remoto base
+            <input type="text" name="remote_base_dir" placeholder="/scratch/vasp-workflows" required>
+          </label>
+
+          <label>
+            Arquivo de identidade
+            <input type="text" name="identity_file" placeholder="C:/Users/wand/.ssh/id_rsa">
+          </label>
+
+          <label>
+            Senha da sessao
+            <input type="password" name="session_password" placeholder="Nao sera salva em arquivo">
+          </label>
+          <p class="field-help">
+            A senha e usada apenas nesta sessao do backend e nao e persistida no `cluster_config.json`.
+          </p>
+
+          <label class="checkbox-row">
+            <input type="checkbox" name="dry_run">
+            <span>Manter em modo dry-run</span>
+          </label>
+
+          <button type="submit">Salvar configuracao</button>
+        </form>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <h2>Resumo da conexao</h2>
+          <p>Leitura rapida do que o backend vai usar ao preparar e monitorar jobs remotos.</p>
+        </div>
+        <div id="cluster-config-summary" class="preview-grid">
+          <div class="empty-state">Configuracao ainda nao carregada.</div>
+        </div>
+      </section>
+
+      <section class="panel cluster-page-panel">
+        <div class="panel-heading panel-heading-inline">
+          <div>
+            <h2>Fila do cluster</h2>
+            <p>Veja os jobs conhecidos pelo backend e pela fila SLURM.</p>
+          </div>
+          <div class="cluster-toolbar">
+            <label class="cluster-filter">
+              Escopo
+              <select id="cluster-scope-select">
+                <option value="user">meus jobs</option>
+                <option value="all">fila total</option>
+              </select>
+            </label>
+            <button id="refresh-cluster-button" type="button">Atualizar fila</button>
+          </div>
+        </div>
+        <div id="cluster-jobs-list" class="cluster-jobs-list">
+          <div class="empty-state">Nenhum job do cluster carregado ainda.</div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

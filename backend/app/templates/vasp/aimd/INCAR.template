@@ -1,0 +1,13 @@
+SYSTEM = {{ project_name }} aimd
+ENCUT = 500
+EDIFF = 1E-5
+ISMEAR = 0
+SIGMA = 0.05
+IBRION = 0
+NSW = 300
+POTIM = 1.0
+TEBEG = 300
+TEEND = 300
+SMASS = 0
+LCHARG = .FALSE.
+LWAVE = .FALSE.

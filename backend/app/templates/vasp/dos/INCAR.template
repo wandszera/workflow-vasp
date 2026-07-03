@@ -1,0 +1,10 @@
+SYSTEM = {{ project_name }} dos
+ENCUT = 450
+EDIFF = 1E-6
+ISMEAR = -5
+SIGMA = 0.05
+NSW = 0
+ICHARG = 11
+NEDOS = 3000
+LCHARG = .TRUE.
+LWAVE = .FALSE.

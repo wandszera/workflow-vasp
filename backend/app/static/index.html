@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Workflow VASP Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body data-page="workflow">
+  <div class="background-orb background-orb-one"></div>
+  <div class="background-orb background-orb-two"></div>
+  <div class="page-shell">
+    <header class="hero">
+      <div class="hero-copy-block">
+        <p class="eyebrow">Workflow VASP Assistant</p>
+        <h1>Controle workflows VASP</h1>
+        <p class="hero-copy">
+          Monte pipelines cientificos, acompanhe a convergencia das etapas e inspecione jobs.
+        </p>
+        <div class="hero-highlights">
+          <span class="pill">AIMD -> relax -> DOS/bandas</span>
+          <span class="pill">Análises prévias</span>
+          <span class="pill">Job automatizado</span>
+        </div>
+        <nav class="page-nav">
+          <a class="nav-link active" href="/">Workflow</a>
+          <a class="nav-link" href="/analysis">Analises</a>
+          <a class="nav-link" href="/cluster">Cluster</a>
+        </nav>
+      </div>
+      <div class="hero-card">
+        <div class="hero-card-top">
+          <p class="metric-label">Workflows ativos</p>
+          <span class="hero-status-dot"></span>
+        </div>
+        <p class="metric-value" id="workflow-count">0</p>
+        <p class="metric-note">Atualizado diretamente pela API local.</p>
+        <div class="hero-card-divider"></div>
+        <p class="hero-card-copy">
+          Crie, acompanhe e refine o workflow sem perder de vista o estado do job, o plano de etapas e os arquivos usados.
+        </p>
+      </div>
+    </header>
+
+    <main class="dashboard-grid">
+      <section class="panel form-panel">
+        <div class="panel-heading">
+          <h2>Novo workflow</h2>
+          <p>Configure uma noova execucao VASP com envio para o cluster.</p>
+        </div>
+
+        <form id="workflow-form">
+          <label>
+            Nome do projeto
+            <input type="text" name="project_name" placeholder="pd_cluster_h2" required>
+          </label>
+
+          <label>
+            Objetivo
+            <input type="text" name="goal" placeholder="otimizar cluster e depois rodar DOS" required>
+          </label>
+
+          <label>
+            Executor
+            <select name="executor">
+              <option value="mock">mock</option>
+              <option value="ssh_slurm">ssh_slurm</option>
+            </select>
+          </label>
+
+          <label>
+            Template
+            <select name="template_name" id="template-select">
+              <option value="">auto</option>
+            </select>
+          </label>
+
+          <label>
+            Receita de workflow
+            <select name="workflow_recipe" id="workflow-recipe-select">
+              <option value="">workflow simples</option>
+              <option value="aimd_relax_dos_phonons">AIMD -> relax -> DOS -> phonons</option>
+              <option value="band_structure">Band Structure (relax -> scf -> band)</option>
+              <option value="aimd">AIMD (relax -> aimd)</option>
+              <option value="neb">NEB (relax_endpoints -> neb)</option>
+              <option value="phonons">Phonons (relax_high_prec -> phonons)</option>
+              <option value="surface_adsorption">Surface Adsorption (surface -> adsorbate -> adsorption -> binding)</option>
+              <option value="mlff_complete">MLFF Complete (select -> train -> validate)</option>
+            </select>
+          </label>
+
+          <div id="remote-settings" class="remote-settings hidden">
+            <div class="inline-heading">
+              <h3>Configuracao SSH/SLURM</h3>
+              <span id="template-badge" class="badge secondary">template auto</span>
+            </div>
+
+            <p id="template-help" class="field-help">
+              Selecione um template real ou deixe em modo automatico para usar o preset inferido pelo workflow.
+            </p>
+
+            <label>
+              Tipo de calculo
+              <select name="calculation_type" id="calculation-type-select">
+                <option value="">inferir automaticamente</option>
+                <option value="relax">relax</option>
+                <option value="dos">dos</option>
+                <option value="aimd">aimd</option>
+                <option value="phonons">phonons</option>
+                <option value="band">band</option>
+                <option value="neb">neb</option>
+                <option value="surface_relax">surface_relax</option>
+                <option value="mlff_training">mlff_training</option>
+              </select>
+            </label>
+
+            <div class="mesh-grid">
+              <label>
+                KX
+                <input type="number" name="kx" min="1" placeholder="4">
+              </label>
+              <label>
+                KY
+                <input type="number" name="ky" min="1" placeholder="4">
+              </label>
+              <label>
+                KZ
+                <input type="number" name="kz" min="1" placeholder="1">
+              </label>
+            </div>
+
+            <label>
+              POSCAR inline
+              <textarea
+                name="structure_source"
+                id="structure-source"
+                rows="8"
+                placeholder="Cole aqui um POSCAR completo para sobrescrever a estrutura do template."
+              ></textarea>
+            </label>
+          </div>
+
+          <label>
+            Cenario
+            <select name="scenario">
+              <option value="running">running</option>
+              <option value="success">success</option>
+              <option value="zbrent_error">zbrent_error</option>
+              <option value="dos_ready">dos_ready</option>
+            </select>
+          </label>
+
+          <label class="checkbox-row">
+            <input type="checkbox" name="auto_apply_fixes">
+            <span>Aplicar correcoes no INCAR automaticamente</span>
+          </label>
+
+          <button type="submit">Criar workflow</button>
+        </form>
+      </section>
+
+      <section class="panel list-panel">
+        <div class="panel-heading">
+          <h2>Workflows</h2>
+          <p>Selecione um workflow para acompanhar a execucao, revisar o plano e abrir os arquivos do job.</p>
+        </div>
+        <div id="workflow-list" class="workflow-list"></div>
+      </section>
+
+      <section class="panel cluster-panel">
+        <div class="panel-heading panel-heading-inline">
+          <div>
+            <h2>Cluster</h2>
+            <p>Veja jobs em execucao e na fila do SLURM sem sair do painel.</p>
+          </div>
+          <div class="cluster-toolbar">
+            <label class="cluster-filter">
+              Escopo
+              <select id="cluster-scope-select">
+                <option value="user">meus jobs</option>
+                <option value="all">fila total</option>
+              </select>
+            </label>
+            <button id="refresh-cluster-button" type="button">Atualizar fila</button>
+          </div>
+        </div>
+        <div id="cluster-jobs-list" class="cluster-jobs-list">
+          <div class="empty-state">Nenhum job do cluster carregado ainda.</div>
+        </div>
+      </section>
+
+      <section class="panel details-panel">
+        <div class="panel-heading">
+          <h2>Detalhes</h2>
+          <p>Abra o workflow selecionado por contexto, sem carregar toda a operacao de uma vez.</p>
+        </div>
+        <div id="workflow-empty" class="empty-state">Selecione ou crie um workflow para ver os detalhes.</div>
+        <div id="workflow-details" class="details hidden">
+          <div class="status-strip">
+            <span class="badge" id="job-status"></span>
+            <span class="badge secondary" id="agent-status"></span>
+          </div>
+
+          <div class="detail-overview-grid">
+            <article class="detail-card overview-card">
+              <h3>Resumo executivo</h3>
+              <p id="summary-text"></p>
+            </article>
+
+            <article class="detail-card overview-card">
+              <h3>Proximo passo</h3>
+              <p id="next-step-text"></p>
+            </article>
+          </div>
+
+          <div class="tab-strip" role="tablist" aria-label="Secoes do workflow">
+            <button class="tab-button active" type="button" data-tab-target="overview">Visao geral</button>
+            <button class="tab-button" type="button" data-tab-target="job">Job</button>
+            <button class="tab-button" type="button" data-tab-target="history">Timeline</button>
+          </div>
+
+          <section class="tab-panel active" data-tab-panel="overview">
+            <div class="detail-grid">
+              <article class="detail-card">
+                <h3>Resultados extraidos</h3>
+                <dl id="results-list" class="results-list"></dl>
+              </article>
+
+              <article class="detail-card">
+                <h3>Execucao</h3>
+                <dl id="execution-list" class="results-list"></dl>
+              </article>
+            </div>
+
+            <article class="detail-card">
+              <h3>Plano do workflow</h3>
+              <div id="workflow-plan-preview" class="preview-grid"></div>
+            </article>
+          </section>
+
+          <section class="tab-panel" data-tab-panel="job">
+            <article class="detail-card">
+              <h3>Configuracao do job</h3>
+              <dl id="job-settings-list" class="results-list"></dl>
+            </article>
+
+            <article class="detail-card">
+              <h3>Preview da submissao</h3>
+              <div id="submission-preview" class="preview-grid"></div>
+            </article>
+
+            <article class="detail-card">
+              <h3>Arquivos do job</h3>
+              <div id="file-preview-grid" class="preview-grid"></div>
+            </article>
+          </section>
+
+          <section class="tab-panel" data-tab-panel="history">
+            <article class="detail-card">
+              <div class="history-header">
+                <h3>Timeline</h3>
+                <button id="advance-button" type="button">Avancar workflow</button>
+              </div>
+              <div id="history-list" class="history-list"></div>
+            </article>
+          </section>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

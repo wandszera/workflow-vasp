@@ -1,0 +1,12 @@
+SYSTEM = {{ project_name }} band
+PREC = Accurate
+ENCUT = 450
+ISMEAR = 0
+SIGMA = 0.05
+NSW = 0
+IBRION = -1
+LCHARG = .TRUE.
+LWAVE = .TRUE.
+LORBIT = 11
+ICHARG = 11
+NEDOS = 2000
