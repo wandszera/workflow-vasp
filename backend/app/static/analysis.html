@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Workflow VASP Analises</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Outfit:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body data-page="analysis">
+  <div class="background-orb background-orb-one"></div>
+  <div class="background-orb background-orb-two"></div>
+  <div class="page-shell">
+    <header class="hero">
+      <div class="hero-copy-block">
+        <p class="eyebrow">Workflow VASP Assistant</p>
+        <h1>Analises cientificas</h1>
+        <p class="hero-copy">
+          Compare workflows, consolide diagnosticos e calcule grandezas derivadas como energia de ligacao
+          em uma area dedicada so a analise.
+        </p>
+        <nav class="page-nav">
+          <a class="nav-link" href="/">Workflow</a>
+          <a class="nav-link active" href="/analysis">Analises</a>
+          <a class="nav-link" href="/cluster">Cluster</a>
+        </nav>
+      </div>
+      <div class="hero-card">
+        <div class="hero-card-top">
+          <p class="metric-label">Workflows disponiveis</p>
+          <span class="hero-status-dot"></span>
+        </div>
+        <p class="metric-value" id="workflow-count">0</p>
+        <p class="metric-note">Selecione um workflow para abrir recomendacoes e comparacoes energeticas.</p>
+      </div>
+    </header>
+
+    <main class="analysis-layout">
+      <section class="panel list-panel">
+        <div class="panel-heading">
+          <h2>Workflows</h2>
+          <p>Escolha o sistema alvo para inspecao analitica.</p>
+        </div>
+        <div id="workflow-list" class="workflow-list"></div>
+      </section>
+
+      <section class="panel analysis-page-panel">
+        <div class="panel-heading">
+          <h2>Painel de analise</h2>
+          <p>Resultados cientificos, recomendacoes e energia de ligacao para o workflow selecionado.</p>
+        </div>
+        <div id="workflow-empty" class="empty-state">Selecione um workflow para abrir a pagina de analise.</div>
+        <div id="workflow-details" class="details hidden">
+          <div class="status-strip">
+            <span class="badge" id="job-status"></span>
+            <span class="badge secondary" id="agent-status"></span>
+          </div>
+
+          <div class="detail-overview-grid">
+            <article class="detail-card overview-card">
+              <h3>Resumo executivo</h3>
+              <p id="summary-text"></p>
+            </article>
+
+            <article class="detail-card overview-card">
+              <h3>Proximo passo</h3>
+              <p id="next-step-text"></p>
+            </article>
+          </div>
+
+          <article class="detail-card">
+            <div class="history-header">
+              <h3>Recomendacao automatica</h3>
+              <div class="analysis-toolbar">
+                <button id="apply-recommendation-button" type="button">Aplicar recomendacao</button>
+                <button id="refresh-analysis-button" type="button">Atualizar analises</button>
+              </div>
+            </div>
+            <div id="recommendation-preview-card" class="recommendation-preview-card"></div>
+          </article>
+
+          <article class="detail-card">
+            <div class="history-header">
+              <h3>Energia de ligacao</h3>
+              <button id="binding-energy-button" type="button">Calcular energia de ligacao</button>
+            </div>
+            <p class="field-help">Use o workflow selecionado como sistema total e escolha os workflows de referencia.</p>
+            <label>
+              Workflows de referencia
+              <select id="binding-reference-select" multiple size="6"></select>
+            </label>
+            <div id="binding-energy-result" class="preview-grid"></div>
+          </article>
+
+          <article class="detail-card">
+            <div class="history-header">
+              <h3>ECN</h3>
+              <button id="ecn-button" type="button">Calcular ECN</button>
+            </div>
+            <p class="field-help">Calcula o Effective Coordination Number a partir do POSCAR do workflow selecionado, seguindo a logica do arquivo `ecn.f`.</p>
+            <div id="ecn-result" class="preview-grid"></div>
+          </article>
+
+          <article class="detail-card">
+            <h3>Analises cientificas</h3>
+            <div id="analysis-results-grid" class="preview-grid"></div>
+          </article>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

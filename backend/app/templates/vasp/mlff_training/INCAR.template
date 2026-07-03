@@ -1,0 +1,17 @@
+SYSTEM = {{ project_name }} mlff training
+PREC = Accurate
+ENCUT = 450
+ISMEAR = 0
+SIGMA = 0.05
+NSW = 1000
+IBRION = 0
+MDALGO = 2
+SMASS = 0
+TEBEG = 300
+TEEND = 300
+POTIM = 1.0
+ML_LMLFF = .TRUE.
+ML_MODE = train
+ML_CTIFOR = 0.002
+LCHARG = .FALSE.
+LWAVE = .FALSE.
