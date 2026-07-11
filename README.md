@@ -1,155 +1,155 @@
 # Workflow VASP AI Assistant
 
-Assistente inteligente e agente especialista em workflows de DFT (Density Functional Theory) com VASP. O foco do sistema é automatizar e reduzir a intervenção manual em cálculos recorrentes, abrangendo inspeção de diretórios, detecção de erros/convergência, sugestão/aplicação de correções e orquestração de múltiplos passos adaptativos.
+An intelligent assistant and expert agent for DFT (Density Functional Theory) workflows with VASP. The system's focus is to automate and reduce manual intervention in recurring calculations, covering directory inspection, error/convergence detection, suggestion/application of corrections, and orchestration of multiple adaptive steps.
 
 ---
 
-## 🚀 Escopo do Sistema
+## 🚀 System Scope
 
-Este projeto implementa:
-- **FastAPI API:** Interface unificada para controle de workflows, monitoramento de cluster, análise física e recomendações do agente.
-- **Interface Gráfica (Dashboards):** Três painéis ricos em CSS para monitorar workflows, gerenciar cluster e rodar análises de física e geometria.
-- **Agente Especialista (VASP Agent):** Motor baseado em heurísticas e base de conhecimento JSON para analisar saídas (`OUTCAR`, `OSZICAR`, `INCAR`) e detectar convergência ou falhas (ex: erro numerico `zbrent`, problemas de convergência eletrônica, etc.).
-- **Persistência de Histórico:** Banco de dados SQLite local salvando logs, metadados de jobs, configurações e timelines de execução.
-- **Três Executores de Cálculo:**
-  - `mock`: Simulação local estagiada sem necessidade de cluster.
-  - `ssh_slurm`: Integração SSH real com submissão SLURM, com suporte a modo `dry-run` para gerar scripts e comandos de envio sem acionar o servidor.
-  - `mlff_training`: Orquestrador de treino ativo de potenciais de aprendizado de máquina (Machine Learning Force Fields - MLFF).
-- **Ferramentas de Análise Física:** Análise de Effective Coordination Number (ECN), energia de ligação (Binding Energy) e diagnósticos automáticos (band gap, neb path, mlff quality, etc.).
+This project implements:
+- **FastAPI API:** Unified interface for workflow control, cluster monitoring, physical analysis, and agent recommendations.
+- **Graphical Interface (Dashboards):** Three CSS-rich panels to monitor workflows, manage clusters, and run physics and geometry analyses.
+- **Expert Agent (VASP Agent):** Engine based on heuristics and a JSON knowledge base to analyze outputs (`OUTCAR`, `OSZICAR`, `INCAR`) and detect convergence or failures (e.g., numerical error `zbrent`, electronic convergence issues, etc.).
+- **History Persistence:** Local SQLite database saving logs, job metadata, configurations, and execution timelines.
+- **Three Calculation Executors:**
+  - `mock`: Staged local simulation without requiring a cluster.
+  - `ssh_slurm`: Real SSH integration with SLURM submission, supporting `dry-run` mode to generate submit scripts and commands without triggering the server.
+  - `mlff_training`: Active training orchestrator for machine learning force field potentials (Machine Learning Force Fields - MLFF).
+- **Physical Analysis Tools:** Effective Coordination Number (ECN) analysis, binding energy calculations, and automatic diagnostics (band gap, neb path, mlff quality, etc.).
 
 ---
 
-## 📂 Estrutura do Projeto
+## 📂 Project Structure
 
 ```text
 workflow-vasp/
 ├── backend/
 │   ├── app/
-│   │   ├── data/                 # SQLite (workflows.db), config.json, KB de erros do VASP
-│   │   ├── services/             # Lógica de negócio (agente, analisador, parser, templates, ECN, executores)
-│   │   ├── static/               # Interface Web Frontend (HTML, CSS, JS)
-│   │   ├── templates/            # Templates VASP internos padrões
-│   │   ├── mlff_runs/            # Diretórios locais de execução do treino MLFF
-│   │   ├── mock_runs/            # Diretórios locais de execução de jobs simulados
-│   │   ├── remote_runs/          # Diretórios locais de cache de execuções remotas (dry-run/real)
-│   │   ├── main.py               # Rotas HTTP da API
-│   │   └── schemas.py            # Modelos de dados Pydantic
-│   ├── tests/                    # Suíte de testes automatizados do agente
-│   └── requirements.txt          # Dependências do Python
-├── templates/                    # Templates VASP customizados do usuário na raiz
-└── README.md                     # Documentação geral do projeto
+│   │   ├── data/                 # SQLite (workflows.db), config.json, VASP error KB (Knowledge Base)
+│   │   ├── services/             # Business logic (agent, analyzer, parser, templates, ECN, executors)
+│   │   ├── static/               # Frontend Web Interface (HTML, CSS, JS)
+│   │   ├── templates/            # Internal default VASP templates
+│   │   ├── mlff_runs/            # Local execution directories for MLFF training
+│   │   ├── mock_runs/            # Local execution directories for simulated jobs
+│   │   ├── remote_runs/          # Local cache directories for remote executions (dry-run/real)
+│   │   ├── main.py               # API HTTP routes
+│   │   └── schemas.py            # Pydantic data models
+│   ├── tests/                    # Agent automated test suite
+│   └── requirements.txt          # Python dependencies
+├── templates/                    # Custom user VASP templates in the root directory
+└── README.md                     # General project documentation
 ```
 
 ---
 
-## ⚙️ Como Rodar Localmente
+## ⚙️ How to Run Locally
 
-Certifique-se de ter o Python 3.10+ instalado.
+Ensure you have Python 3.10+ installed.
 
 ```bash
-# 1. Navegue até o diretório do backend
+# 1. Navigate to the backend directory
 cd backend
 
-# 2. Crie e ative o ambiente virtual
+# 2. Create and activate virtual environment
 python -m venv .venv
-.venv\Scripts\activate      # No Windows
-source .venv/bin/activate    # No Linux/macOS
+.venv\Scripts\activate      # On Windows
+source .venv/bin/activate    # On Linux/macOS
 
-# 3. Instale as dependências
+# 3. Install dependencies
 pip install -r requirements.txt
 
-# 4. Inicie o servidor FastAPI com live-reload
+# 4. Start the FastAPI server with live-reload
 uvicorn app.main:app --reload
 ```
 
-Após iniciar, os dashboards frontend estarão acessíveis nas seguintes rotas:
-- **Painel Geral de Workflows:** [http://127.0.0.1:8000/](http://127.0.0.1:8000/)
-- **Painel de Análise Física:** [http://127.0.0.1:8000/analysis](http://127.0.0.1:8000/analysis)
-- **Painel do Cluster SSH/SLURM:** [http://127.0.0.1:8000/cluster](http://127.0.0.1:8000/cluster)
+After starting, the frontend dashboards will be accessible at the following routes:
+- **General Workflow Dashboard:** [http://127.0.0.1:8000/](http://127.0.0.1:8000/)
+- **Physical Analysis Panel:** [http://127.0.0.1:8000/analysis](http://127.0.0.1:8000/analysis)
+- **SSH/SLURM Cluster Management Panel:** [http://127.0.0.1:8000/cluster](http://127.0.0.1:8000/cluster)
 
-O Swagger interativo da API está disponível em [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs).
+The interactive API Swagger is available at [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs).
 
 ---
 
-## 🖥️ Dashboards Frontend (Rotas Web)
+## 🖥️ Frontend Dashboards (Web Routes)
 
-Os painéis web integrados são servidos diretamente pelo FastAPI a partir da pasta `static/`:
+The integrated web panels are served directly by FastAPI from the `static/` folder:
 
-1. **Dashboard Principal (`GET /`)**
-   Visualização completa dos workflows criados. Permite a criação de novos workflows (selecionando executor, cenário e objetivos), acompanhamento em tempo real da timeline de execução e aplicação manual ou automática das sugestões do agente.
+1. **Main Dashboard (`GET /`)**
+   Complete visualization of created workflows. Allows the creation of new workflows (selecting executor, scenario, and objectives), real-time monitoring of the execution timeline, and manual or automatic application of agent suggestions.
    
-2. **Painel de Análise (`GET /analysis`)**
-   Executa e exibe diagnósticos aprofundados sobre os resultados de um workflow. Permite visualizar o ECN dos átomos de uma estrutura POSCAR e selecionar múltiplos workflows concluídos para calcular a energia de ligação molecular.
+2. **Analysis Panel (`GET /analysis`)**
+   Executes and displays deep diagnostics on workflow results. Allows visualizing the ECN of atoms in a POSCAR structure and selecting multiple completed workflows to calculate the molecular binding energy.
    
-3. **Painel de Gerenciamento do Cluster (`GET /cluster`)**
-   Permite visualizar e editar as configurações SSH e SLURM salvas localmente, cadastrar senhas temporárias de sessão (que não são persistidas em arquivo para maior segurança) e visualizar em tempo real a lista de jobs remotos rodando na fila do cluster (`squeue`).
+3. **Cluster Management Panel (`GET /cluster`)**
+   Allows viewing and editing locally saved SSH and SLURM configurations, registering temporary session passwords (which are not persisted in files for security), and viewing the real-time list of remote jobs running in the cluster queue (`squeue`).
 
 ---
 
-## 🛠️ Executores e Modos de Trabalho
+## 🛠️ Executors and Working Modes
 
-### 1. Executor Simulado (`mock`)
-Permite desenvolver e testar toda a lógica da API sem a necessidade de um servidor de cálculos VASP real ou conexões de rede. Ele lê cenários predefinidos a partir de `backend/app/mock_runs/` e gera saídas simuladas.
-* **Cenários de Simulação Disponíveis:**
-  * `success`: O cálculo converge diretamente na primeira rodada.
-  * `running`: Simula um cálculo que inicia pendente/rodando e converge após o avanço do estágio.
-  * `zbrent_error`: Simula uma falha numérica de quebra do algoritmo de minimização `zbrent` no primeiro estágio, corrigível via agente modificando parâmetros de `INCAR`, convergindo na rodada seguinte.
-  * `dos_ready`: Simula um cálculo de relaxação convergido, pronto para iniciar uma etapa subsequente de Densidade de Estados (DOS).
+### 1. Simulated Executor (`mock`)
+Allows developing and testing all API logic without requiring a real VASP calculation server or network connections. It reads predefined scenarios from `backend/app/mock_runs/` and generates simulated outputs.
+* **Available Simulation Scenarios:**
+  - `success`: The calculation converges directly in the first run.
+  - `running`: Simulates a calculation that starts pending/running and converges after advancing the stage.
+  - `zbrent_error`: Simulates a numerical failure from a breakdown in the `zbrent` minimization algorithm during the first stage, which is correctable by the agent modifying `INCAR` parameters, converging in the subsequent run.
+  - `dos_ready`: Simulates a converged relaxation calculation, ready to start a subsequent Density of States (DOS) step.
 
-### 2. Executor SSH/SLURM (`ssh_slurm`)
-Fornece integração para submissão remota de cálculos em clusters baseados no agendador SLURM.
-* **Modo Dry Run (`dry_run = true`):** Não abre conexões SSH. Prepara localmente o script de submissão `submit_vasp.slurm`, gera o plano de comandos em `REMOTE_PLAN.txt` e salva os logs de comandos planejados em `command_log.json`.
-* **Modo Real (`dry_run = false`):** Utiliza chaves SSH e senhas de sessão configuradas para efetuar `scp` dos arquivos de input, submeter o cálculo via `sbatch` no cluster e monitorar seu progresso.
+### 2. SSH/SLURM Executor (`ssh_slurm`)
+Provides integration for remote calculation submission on clusters using the SLURM scheduler.
+* **Dry Run Mode (`dry_run = true`):** Does not open SSH connections. Prepares the submission script `submit_vasp.slurm` locally, generates the command plan in `REMOTE_PLAN.txt`, and saves command logs to `command_log.json`.
+* **Real Mode (`dry_run = false`):** Uses SSH keys and configured session passwords to `scp` input files, submits calculations via `sbatch` on the cluster, and monitors progress.
 
-### 3. Executor de Treinamento MLFF (`mlff_training`)
-Desenvolvido especificamente para treinar Potenciais baseados em Aprendizado de Máquina (Machine Learning Force Fields) do VASP.
-* Habilita chaves específicas no `INCAR` (`ML_LMLFF = .TRUE.`, `ML_MODE = select/train/validate`).
-* Simula a amostragem de dados e loops de aprendizado ativo sobre temperatura e tolerância de força física (`ML_CTIFOR`).
-* Retorna se o potencial treinado é confiável e possui qualidade suficiente para ser promovido para benchmarking de produção.
-
----
-
-## 🔬 Análise e Ferramentas Físico-Químicas
-
-O painel de análises conecta endpoints dedicados para extrair dados estruturais e energéticos dos cálculos:
-
-### Número de Coordenação Efetivo (ECN)
-* **Rota:** `GET /workflows/{workflow_id}/ecn`
-* **Implementação:** [EcnService](file:///c:/Users/wand/Desktop/projetos_pessoais/workflow-vasp/backend/app/services/ecn_service.py)
-* **Objetivo:** Computa o ECN por átomo baseando-se em uma abordagem autoconsistente sobre a matriz de distâncias atômicas. Retorna distâncias de ligação mínimas, médias ponderadas (rwabl), coordenadas de supercélula tridimensional e o ECN médio global.
-
-### Cálculo de Energia de Ligação (Binding Energy)
-* **Rota:** `POST /analysis/binding-energy`
-* **Implementação:** [VaspAnalysisService](file:///c:/Users/wand/Desktop/projetos_pessoais/workflow-vasp/backend/app/services/vasp_analysis_service.py)
-* **Objetivo:** Permite selecionar um cálculo de adsorbato/superfície e descontar as energias dos sistemas isolados componentes para encontrar a energia de ligação/adsorção final:
-  $$E_{\text{lig}} = E_{\text{alvo}} - \sum E_{\text{referências}}$$
-
-### Módulos de Diagnósticos de Resultados
-A rota `GET /workflows/{workflow_id}/analysis` executa heurísticas detalhadas baseadas em arquivos de saída do VASP:
-* **Band Gap Check:** Analisa os autovalores de energia (`OUTCAR`) e infere se o material é semicondutor, isolante ou metálico, calculando o gap de banda eletrônica.
-* **NEB Path Check:** Analisa caminhos de reação de Nudged Elastic Band (imagens intermediárias) para garantir caminhos geométricos coerentes e livres de colisões.
-* **MLFF Quality:** Verifica a convergência de RMSE de forças/energias em saídas de treino MLFF.
-* **Convergência & Estabilidade:** Identifica oscilações de energia SCF ou divergências e sugere alterações na mistura de densidades eletrônicas.
+### 3. MLFF Training Executor (`mlff_training`)
+Specifically developed for training VASP Machine Learning Force Fields (MLFF).
+* Enables specific `INCAR` keys (`ML_LMLFF = .TRUE.`, `ML_MODE = select/train/validate`).
+* Simulates data sampling and active learning loops over temperature and physical force tolerance (`ML_CTIFOR`).
+* Returns whether the trained potential is reliable and of high enough quality to be promoted for production benchmarking.
 
 ---
 
-## 🔁 Fluxo Dinâmico de Recomendações e Intervenção
+## 🔬 Physics and Chemistry Analysis Tools
 
-O agente não apenas detecta problemas, mas permite agir sobre eles interativamente:
+The analysis panel connects to dedicated endpoints to extract structural and energetic data from calculations:
 
-1. **Inspeção Manual e Edição:**
-   * Através do endpoint `GET /workflows/{workflow_id}/files-preview`, o usuário visualiza os inputs ativos.
-   * Modificações de parâmetros do `INCAR` ou malhas de `KPOINTS` podem ser reescritas diretamente via `POST /workflows/{workflow_id}/files`.
-2. **Visualização de Recomendações:**
-   * A rota `GET /workflows/{workflow_id}/recommendation-preview` retorna qual ação adaptativa o agente aconselha tomar com base na análise física e status do cálculo.
-3. **Encadeamento de Etapas:**
-   * Executando `POST /workflows/{workflow_id}/apply-recommendation`, o sistema cria um novo workflow derivado utilizando os artefatos de estrutura mais recentes (como o `CONTCAR` promovido a `POSCAR`) e aplicando as receitas de cálculo apropriadas (ex: migrar de uma relaxação geométrica bem-sucedida para um cálculo de Densidade de Estados (DOS) ou cálculo de Fônons).
+### Effective Coordination Number (ECN)
+* **Route:** `GET /workflows/{workflow_id}/ecn`
+* **Implementation:** [EcnService](file:///c:/Users/wand/Desktop/projetos_pessoais/workflow-vasp/backend/app/services/ecn_service.py)
+* **Purpose:** Computes the ECN per atom based on a self-consistent approach over the atomic distance matrix. Returns minimum bond distances, weighted average bond lengths (rwabl), three-dimensional supercell coordinates, and the overall average ECN.
+
+### Binding Energy Calculation
+* **Route:** `POST /analysis/binding-energy`
+* **Implementation:** [VaspAnalysisService](file:///c:/Users/wand/Desktop/projetos_pessoais/workflow-vasp/backend/app/services/vasp_analysis_service.py)
+* **Purpose:** Allows selecting an adsorbate/surface calculation and subtracting the energies of the isolated component systems to find the final binding/adsorption energy:
+  $$E_{\text{bind}} = E_{\text{target}} - \sum E_{\text{references}}$$
+
+### Results Diagnostic Modules
+The `GET /workflows/{workflow_id}/analysis` route runs detailed heuristics based on VASP output files:
+* **Band Gap Check:** Analyzes energy eigenvalues (`OUTCAR`) and infers whether the material is a semiconductor, insulator, or metal, calculating the electronic band gap.
+* **NEB Path Check:** Analyzes Nudged Elastic Band (NEB) reaction paths (intermediate images) to ensure coherent and collision-free geometric pathways.
+* **MLFF Quality:** Verifies the convergence of force/energy RMSE in MLFF training outputs.
+* **Convergence & Stability:** Identifies SCF energy oscillations or divergence and suggests changes to electronic density mixing.
 
 ---
 
-## 🔮 Próximos Passos Sugeridos
+## 🔁 Dynamic Recommendation and Intervention Flow
 
-- **Orquestração de Fila Assíncrona:** Implementar filas de execução em background usando Celery ou RQ com Redis para remover o processamento síncrono de conexões SSH demoradas.
-- **Persistência Multiusuário:** Substituir o banco SQLite local (`workflows.db`) por uma imagem PostgreSQL estruturada quando o sistema for expandido para uso colaborativo em laboratório.
-- **Validador Semântico de POSCAR:** Impedir submissões remotas caso o POSCAR possua sobreposição de átomos física ou incoerência na caixa de simulação.
-- **Gráficos Interativos:** Adicionar visualização 3D da estrutura cristalina (`POSCAR` / `CONTCAR`) no frontend usando JS/Three.js ou bibliotecas similares.
+The agent not only detects problems but also allows interacting with them:
+
+1. **Manual Inspection and Editing:**
+   * Through the `GET /workflows/{workflow_id}/files-preview` endpoint, the user can preview active inputs.
+   * Modifying `INCAR` parameters or `KPOINTS` grids can be rewritten directly via `POST /workflows/{workflow_id}/files`.
+2. **Recommendation Preview:**
+   * The `GET /workflows/{workflow_id}/recommendation-preview` route returns what adaptive action the agent advises based on physical analysis and calculation status.
+3. **Chaining Steps:**
+   * Running `POST /workflows/{workflow_id}/apply-recommendation` creates a new derived workflow using the latest structure artifacts (such as promoting `CONTCAR` to `POSCAR`) and applying the appropriate calculation recipes (e.g., migrating from a successful geometric relaxation to a Density of States (DOS) or Phonon calculation).
+
+---
+
+## 🔮 Suggested Next Steps
+
+- **Asynchronous Queue Orchestration:** Implement background execution queues using Celery or RQ with Redis to remove synchronous processing of long SSH connections.
+- **Multi-user Persistence:** Replace the local SQLite database (`workflows.db`) with a structured PostgreSQL image when scaling the system for collaborative laboratory use.
+- **Semantic POSCAR Validator:** Prevent remote submissions if the POSCAR contains overlapping atoms or simulation box inconsistency.
+- **Interactive Visualizations:** Add 3D crystal structure visualization (`POSCAR` / `CONTCAR`) in the frontend using JS/Three.js or similar libraries.
