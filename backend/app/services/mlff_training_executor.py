@@ -41,6 +41,9 @@ class MlffTrainingExecutor:
             "target_rmse": float(settings.get("mlff_target_rmse") or 0.04),
             "min_reference_count": int(settings.get("mlff_min_reference_count") or 40),
         }
+        for k, v in settings.items():
+            if k.startswith("ml_") or k.startswith("ML_"):
+                metadata[k.lower()] = v
         self._write_metadata(calc_dir, metadata)
         self._materialize_stage(calc_dir, metadata)
         return self._build_response(calc_dir, metadata)
@@ -58,6 +61,36 @@ class MlffTrainingExecutor:
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
             if metadata.get("job_id") == job_id:
                 return metadata_path.parent
+
+        # Fallback: check SQLite database for workflow's calc_path
+        try:
+            from .sqlite_workflow_store import WorkflowStore
+            store = WorkflowStore()
+            for wf in store.list_workflows():
+                if wf.get("job_id") == job_id:
+                    calc_path = Path(wf["calc_path"])
+                    metadata_path = calc_path / "mlff_job.json"
+                    if not metadata_path.exists():
+                        metadata = {
+                            "job_id": job_id,
+                            "project_name": wf.get("project_name", "imported_mlff"),
+                            "scenario": wf.get("scenario", "success"),
+                            "goal": wf.get("goal"),
+                            "stage": wf.get("current_stage", 0),
+                            "mlff_mode": "train",
+                            "dataset_source": "dataset_curado_local",
+                            "reference_count": 24,
+                            "force_tolerance": 0.05,
+                            "temperature_schedule": "300K->1200K",
+                            "target_rmse": 0.04,
+                            "min_reference_count": 40
+                        }
+                        calc_path.mkdir(parents=True, exist_ok=True)
+                        metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+                    return calc_path
+        except Exception:
+            pass
+
         raise FileNotFoundError(f"Workflow MLFF nao encontrado: {job_id}")
 
     def _materialize_stage(self, calc_dir: Path, metadata: dict[str, object]) -> None:
@@ -70,21 +103,24 @@ class MlffTrainingExecutor:
         target_rmse = float(metadata["target_rmse"])
         min_reference_count = int(metadata["min_reference_count"])
 
-        incar = "\n".join(
-            [
-                "PREC = Accurate",
-                "ENCUT = 520",
-                "EDIFF = 1E-6",
-                "NSW = 400",
-                "IBRION = 0",
-                "POTIM = 1.0",
-                "ML_LMLFF = .TRUE.",
-                f"ML_MODE = {self._stage_name(stage)}",
-                "ML_ISTART = 0",
-                "ML_MCONF_NEW = 5",
-                f"ML_CTIFOR = {force_tolerance:.3f}",
-            ]
-        )
+        incar_lines = [
+            "PREC = Accurate",
+            "ENCUT = 520",
+            "EDIFF = 1E-6",
+            "NSW = 400",
+            "IBRION = 0",
+            "POTIM = 1.0",
+            "ML_LMLFF = .TRUE.",
+            f"ML_MODE = {self._stage_name(stage)}",
+            "ML_ISTART = 0",
+            "ML_MCONF_NEW = 5",
+            f"ML_CTIFOR = {force_tolerance:.3f}",
+        ]
+        for k, v in metadata.items():
+            if k.startswith("ml_") and k not in ["ml_mode", "ml_istart", "ml_lmlff", "ml_mconf_new", "ml_ctifor"]:
+                incar_lines.append(f"{k.upper()} = {v}")
+
+        incar = "\n".join(incar_lines)
         (calc_dir / "INCAR").write_text(incar + "\n", encoding="utf-8")
         (calc_dir / "POSCAR").write_text(
             "MLFF training seed\n1.0\n10 0 0\n0 10 0\n0 0 10\nPd H\n1 2\nDirect\n0.0 0.0 0.0\n0.3 0.3 0.3\n0.7 0.7 0.7\n",

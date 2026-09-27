@@ -10,6 +10,7 @@ const pageMode = document.body.dataset.page || "workflow";
 const workflowList = document.querySelector("#workflow-list");
 const workflowCount = document.querySelector("#workflow-count");
 const workflowForm = document.querySelector("#workflow-form");
+const importForm = document.querySelector("#import-form");
 const clusterConfigForm = document.querySelector("#cluster-config-form");
 const workflowEmpty = document.querySelector("#workflow-empty");
 const workflowDetails = document.querySelector("#workflow-details");
@@ -50,6 +51,8 @@ state.activeTab = "overview";
 state.bindingEnergyResult = null;
 state.ecnResult = null;
 state.clusterConfig = null;
+state.nebData = null;
+state.nebInterval = null;
 
 function readWorkflowIdFromUrl() {
   const params = new URLSearchParams(window.location.search);
@@ -314,6 +317,19 @@ function renderWorkflowDetails(workflow, filePreviews = []) {
   }
   renderActiveTab();
   bindFileEditors();
+  bindDescriptorTabs();
+  let collidingIndices = [];
+  if (state.analysisResults) {
+    const poscarCheck = state.analysisResults.find(r => r.tool === "poscar_semantic_check");
+    if (poscarCheck && poscarCheck.details && poscarCheck.details.colliding_pairs) {
+      collidingIndices = Array.from(new Set(poscarCheck.details.colliding_pairs.flatMap(p => [p[0], p[1]])));
+    }
+  }
+  if (typeof bindVisualizerTriggers === "function") {
+    bindVisualizerTriggers(collidingIndices);
+  }
+  bindPoscarActions();
+  loadExecutionLogs(workflow.workflow_id);
 
   document.querySelector("#history-list").innerHTML = workflow.history
     .slice()
@@ -491,6 +507,217 @@ function buildAnalysisPreview(results) {
     .map(
       (result) => {
         let visualHtml = "";
+        
+        // 5. Renderizador Visual para Validador Semantico de POSCAR
+        if (result.tool === "poscar_semantic_check") {
+          const details = result.details || {};
+          const valid = details.valid;
+          const min_dist = details.min_distance_ang;
+          const colliding_count = details.colliding_count || 0;
+          
+          visualHtml = `
+            <div class="poscar-validation-visual" style="margin-top: 1rem; background: rgba(255, 255, 255, 0.02); padding: 1rem; border-radius: 8px; border: 1px solid ${valid ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)'};">
+              <h5 style="margin-top: 0; font-family: 'Outfit', sans-serif; color: ${valid ? '#10b981' : '#f43f5e'};">
+                ${valid ? 'Geometria Fisica Saudavel' : `Colisoes Atomicas Detectadas (${colliding_count} pares)`}
+              </h5>
+              <p style="font-size: 0.9rem; margin-bottom: 1rem; color: var(--text-muted);">
+                Distancia minima interatomica calculada: <strong style="color: #fff;">${min_dist} A</strong> (Limite de seguranca: 0.8 A).
+              </p>
+              <div style="display: flex; gap: 0.75rem;">
+                ${!valid ? `
+                  <button type="button" id="btn-fix-collisions" style="background: #10b981; border: 1px solid #10b981; color: #fff; padding: 0.5rem 1rem; border-radius: 6px; font-weight: 600; cursor: pointer; transition: all 0.2s;">
+                    🔧 Corrigir Colisoes
+                  </button>
+                ` : ''}
+                <button type="button" id="btn-export-xyz" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 0.5rem 1rem; border-radius: 6px; font-weight: 600; cursor: pointer; transition: all 0.2s;">
+                  📥 Exportar XYZ
+                </button>
+              </div>
+            </div>
+          `;
+        }
+
+        // 6. Renderizador Visual para Validador de INCAR
+        if (result.tool === "incar_semantic_check") {
+          const details = result.details || {};
+          const valid = details.valid;
+          const warnings = details.warnings || [];
+          
+          visualHtml = `
+            <div class="incar-validation-visual" style="margin-top: 1rem; background: rgba(255, 255, 255, 0.02); padding: 1rem; border-radius: 8px; border: 1px solid ${valid ? 'rgba(16, 185, 129, 0.2)' : 'rgba(245, 158, 11, 0.2)'};">
+              <h5 style="margin-top: 0; font-family: 'Outfit', sans-serif; color: ${valid ? '#10b981' : '#f59e0b'};">
+                ${valid ? '✅ INCAR Consistente' : '⚠️ Pendencias de Parametros INCAR'}
+              </h5>
+              ${warnings.length > 0 ? `
+                <ul style="font-size: 0.85rem; margin-bottom: 1rem; padding-left: 1.2rem; color: var(--text-muted);">
+                  ${warnings.map(w => `<li style="margin-bottom: 0.25rem;">${w}</li>`).join('')}
+                </ul>
+              ` : `
+                <p style="font-size: 0.9rem; margin-bottom: 0.5rem; color: var(--text-muted);">Todos os parametros cruciais do INCAR estao configurados corretamente para a meta.</p>
+              `}
+              ${!valid ? `
+                <button type="button" id="btn-fix-incar" style="background: #f59e0b; border: 1px solid #f59e0b; color: #fff; padding: 0.5rem 1rem; border-radius: 6px; font-weight: 600; cursor: pointer; transition: all 0.2s;">
+                  🔧 Corrigir INCAR
+                </button>
+              ` : ''}
+            </div>
+          `;
+        }
+
+        // 7. Renderizador Visual para Validador de KPOINTS
+        if (result.tool === "kpoints_semantic_check") {
+          const details = result.details || {};
+          const valid = details.valid;
+          const warnings = details.warnings || [];
+          const mesh_details = details.mesh_details || {};
+          const mesh = mesh_details.mesh || [1, 1, 1];
+          const densities = mesh_details.densities || [0, 0, 0];
+          const type = mesh_details.type || "monkhorst-pack";
+          const suggested = details.suggested_mesh || [1, 1, 1];
+          
+          visualHtml = `
+            <div class="kpoints-validation-visual" style="margin-top: 1rem; background: rgba(255, 255, 255, 0.02); padding: 1rem; border-radius: 8px; border: 1px solid ${valid ? 'rgba(16, 185, 129, 0.2)' : 'rgba(245, 158, 11, 0.2)'};">
+              <h5 style="margin-top: 0; font-family: 'Outfit', sans-serif; color: ${valid ? '#10b981' : '#f59e0b'};">
+                ${valid ? '✅ Malha KPOINTS Saudavel' : '⚠️ Ajustes Recomendados no KPOINTS'}
+              </h5>
+              <p style="font-size: 0.85rem; margin-bottom: 0.75rem; color: var(--text-muted);">
+                Malha atual: <strong style="color: #fff;">${mesh[0]}x${mesh[1]}x${mesh[2]}</strong> (${type}).<br/>
+                Densidades ($N_k \\times a$): X: <strong>${densities[0]} A</strong>, Y: <strong>${densities[1]} A</strong>, Z: <strong>${densities[2]} A</strong>.
+              </p>
+              ${warnings.length > 0 ? `
+                <ul style="font-size: 0.85rem; margin-bottom: 1rem; padding-left: 1.2rem; color: var(--text-muted);">
+                  ${warnings.map(w => `<li style="margin-bottom: 0.25rem;">${w}</li>`).join('')}
+                </ul>
+              ` : `
+                <p style="font-size: 0.85rem; margin-bottom: 0.5rem; color: var(--text-muted);">A malha de KPOINTS possui densidade perfeita para esta geometria.</p>
+              `}
+              <div style="font-size: 0.85rem; padding: 0.5rem; background: rgba(255,255,255,0.02); border-radius: 4px; border: 1px solid rgba(255,255,255,0.05); color: var(--text-muted); margin-bottom: 0.75rem;">
+                💡 Sugestao automatica do assistente: malha <strong style="color: #fff;">${suggested[0]}x${suggested[1]}x${suggested[2]}</strong>
+              </div>
+              ${!valid ? `
+                <button type="button" id="btn-fix-kpoints" style="background: #f59e0b; border: 1px solid #f59e0b; color: #fff; padding: 0.5rem 1rem; border-radius: 6px; font-weight: 600; cursor: pointer; transition: all 0.2s; margin-top: 0.25rem;">
+                  🔧 Gerar Malha Recomendada
+                </button>
+              ` : ''}
+            </div>
+          `;
+        }
+
+        // 8. Renderizador Visual para Validador de POTCAR
+        if (result.tool === "potcar_semantic_check") {
+          const details = result.details || {};
+          const valid = details.valid;
+          const warnings = details.warnings || [];
+          const poscar_elements = details.poscar_elements || [];
+          const potcar_elements = details.potcar_elements || [];
+          const max_enmax = details.max_enmax || 0.0;
+          const suggested_encut = details.suggested_encut || 0;
+          
+          visualHtml = `
+            <div class="potcar-validation-visual" style="margin-top: 1rem; background: rgba(255, 255, 255, 0.02); padding: 1rem; border-radius: 8px; border: 1px solid ${valid ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.2)'};">
+              <h5 style="margin-top: 0; font-family: 'Outfit', sans-serif; color: ${valid ? '#10b981' : '#f43f5e'};">
+                ${valid ? '✅ POTCAR Consistente' : '❌ Inconsistencias no POTCAR'}
+              </h5>
+              <p style="font-size: 0.85rem; margin-bottom: 0.75rem; color: var(--text-muted);">
+                Elementos no POSCAR: <strong style="color: #fff;">${poscar_elements.join(' ')}</strong>.<br/>
+                Elementos no POTCAR: <strong style="color: #fff;">${potcar_elements.join(' ')}</strong>.<br/>
+                Cutoff maximo do pseudopotencial (ENMAX): <strong style="color: #f59e0b;">${max_enmax} eV</strong>.
+              </p>
+              ${warnings.length > 0 ? `
+                <ul style="font-size: 0.85rem; margin-bottom: 1rem; padding-left: 1.2rem; color: var(--text-muted);">
+                  ${warnings.map(w => `<li style="margin-bottom: 0.25rem;">${w}</li>`).join('')}
+                </ul>
+              ` : `
+                <p style="font-size: 0.85rem; margin-bottom: 0.5rem; color: var(--text-muted);">A ordem dos elementos e o ENCUT estao totalmente alinhados e seguros.</p>
+              `}
+            </div>
+          `;
+        }
+
+        // 9. Renderizador Visual para Auto-Recuperacao (Self-Healing)
+        if (result.tool === "error_recovery_check") {
+          const details = result.details || {};
+          const detected = details.error_detected;
+          const fixed = details.fix_applied;
+          const msg = details.message || "";
+          
+          visualHtml = `
+            <div class="error-recovery-visual" style="margin-top: 1rem; background: rgba(255, 255, 255, 0.02); padding: 1rem; border-radius: 8px; border: 1px solid ${!detected ? 'rgba(16, 185, 129, 0.2)' : 'rgba(239, 68, 68, 0.25)'};">
+              <h5 style="margin-top: 0; font-family: 'Outfit', sans-serif; color: ${!detected ? '#10b981' : '#f43f5e'}; font-size: 0.95rem;">
+                ${!detected ? '🛡️ Monitoramento de Erros VASP' : '🚨 Erro VASP Detectado e Corrigido'}
+              </h5>
+              <p style="font-size: 0.85rem; margin-bottom: 0.5rem; color: var(--text-muted); line-height: 1.4;">
+                ${msg}
+              </p>
+              ${detected && fixed ? `
+                <div style="font-size: 0.8rem; padding: 0.4rem; background: rgba(16, 185, 129, 0.1); border-radius: 4px; border: 1px solid rgba(16, 185, 129, 0.2); color: #34d399; display: inline-block;">
+                  ✔️ Auto-Recuperacao aplicada com sucesso no INCAR. Pronto para reiniciar.
+                </div>
+              ` : ''}
+            </div>
+          `;
+        }
+
+        // 3. Renderizador Visual para Validacao de Paridade MLFF vs DFT
+        if (result.tool === "mlff_validation_check" && result.status === "ready") {
+          const details = result.details || {};
+          visualHtml = `
+            <div class="mlff-validation-visual">
+              <div class="plots-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem; margin-top: 1rem;">
+                <div class="plot-box" style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; padding: 1rem; text-align: center;">
+                  <h5 style="margin-top: 0; font-family: 'Outfit', sans-serif;">Paridade de Energia</h5>
+                  <img src="/workflows/${state.selectedWorkflowId}/file/${details.energy_plot}" alt="Paridade de Energia" class="parity-plot-img" style="max-width: 100%; border-radius: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);" />
+                </div>
+                <div class="plot-box" style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; padding: 1rem; text-align: center;">
+                  <h5 style="margin-top: 0; font-family: 'Outfit', sans-serif;">Paridade de Forcas</h5>
+                  <img src="/workflows/${state.selectedWorkflowId}/file/${details.force_plot}" alt="Paridade de Forcas" class="parity-plot-img" style="max-width: 100%; border-radius: 4px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);" />
+                </div>
+              </div>
+            </div>
+          `;
+        }
+
+        // 4. Renderizador Visual para Varredura de Parametros MLFF
+        if (result.tool === "mlff_descriptor_scan" && result.status === "ready") {
+          const details = result.details || {};
+          const summaryData = details.summary_data || {};
+          const generatedPlots = details.generated_plots || {};
+          const descriptorNames = Object.keys(summaryData);
+          
+          if (descriptorNames.length > 0) {
+            visualHtml = `
+              <div class="mlff-descriptor-visual" data-workflow-id="${state.selectedWorkflowId}">
+                <div class="descriptor-tabs-row" style="display: flex; gap: 0.5rem; margin: 1rem 0; overflow-x: auto; padding-bottom: 0.25rem;">
+                  ${descriptorNames.map((name, idx) => `
+                    <button type="button" class="desc-tab-btn ${idx === 0 ? 'active' : ''}" data-desc-target="${name}" style="background: ${idx === 0 ? '#6366f1' : 'rgba(255, 255, 255, 0.05)'}; border: 1px solid rgba(255, 255, 255, 0.1); color: ${idx === 0 ? '#ffffff' : 'var(--text-muted)'}; padding: 0.5rem 1rem; border-radius: 20px; font-weight: 500; cursor: pointer; transition: all 0.2s;">
+                      ${name}
+                    </button>
+                  `).join("")}
+                </div>
+                <div class="descriptor-plots-container">
+                  ${descriptorNames.map((name, idx) => `
+                    <div class="descriptor-plot-item ${idx === 0 ? '' : 'hidden'}" id="plot-item-${name}">
+                      <div class="plot-metrics-pill" style="background: rgba(16, 185, 129, 0.1); border-left: 4px solid #10b981; padding: 0.75rem; border-radius: 4px; margin-bottom: 1rem; font-size: 0.9rem;">
+                        Melhor Forca em <strong>${summaryData[name].best_force_val}</strong> (RMSE: ${summaryData[name].best_force_rmse.toFixed(5)}) | 
+                        Melhor Energia em <strong>${summaryData[name].best_energy_val}</strong> (RMSE: ${summaryData[name].best_energy_rmse.toFixed(5)})
+                      </div>
+                      <div class="plots-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.5rem;">
+                        <div class="plot-box" style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; padding: 1rem; text-align: center;">
+                          <h6 style="margin-top: 0; font-family: 'Outfit', sans-serif;">RMSE de Forcas vs ${name}</h6>
+                          <img src="/workflows/${state.selectedWorkflowId}/file/${generatedPlots[name].force_plot}" alt="${name} Forca" class="parity-plot-img" style="max-width: 100%; border-radius: 4px;" />
+                        </div>
+                        <div class="plot-box" style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 8px; padding: 1rem; text-align: center;">
+                          <h6 style="margin-top: 0; font-family: 'Outfit', sans-serif;">RMSE de Energia vs ${name}</h6>
+                          <img src="/workflows/${state.selectedWorkflowId}/file/${generatedPlots[name].energy_plot}" alt="${name} Energia" class="parity-plot-img" style="max-width: 100%; border-radius: 4px;" />
+                        </div>
+                      </div>
+                    </div>
+                  `).join("")}
+                </div>
+              </div>
+            `;
+          }
+        }
         
         // 1. Renderizador Visual para Band Gap
         if (result.tool === "band_gap_check" && result.status !== "unavailable") {
@@ -708,7 +935,41 @@ function buildFilePreview(filePreviews) {
                 </div>
               `
               : file.exists
-                ? `<pre>${escapeHtml(file.content || "(arquivo vazio)")}</pre>`
+                ? `
+                  ${(file.name === "POSCAR" || file.name === "CONTCAR") ? `
+                    <div class="structure-visualizer-container" style="display: flex; flex-direction: column; gap: 0.5rem; margin-bottom: 1rem;">
+                      <div class="structure-viewer-canvas" id="3dmol-${file.name}" data-structure-content="${encodeURIComponent(file.content || '')}" style="width: 100%; height: 350px; background-color: #0f172a; border-radius: 8px; position: relative;">
+                        <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: var(--text-muted); pointer-events: none;">Carregando visualizador 3D...</div>
+                      </div>
+                      <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
+                        <div style="display: flex; gap: 0.25rem;">
+                          <button type="button" class="btn-3d-action" data-3d-target="${file.name}" data-supercell="1,1,1" style="background: var(--bg-card); border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.8rem; cursor: pointer; background: #6366f1; border-color: #6366f1;">1x1x1</button>
+                          <button type="button" class="btn-3d-action" data-3d-target="${file.name}" data-supercell="2,2,2" style="background: var(--bg-card); border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.8rem; cursor: pointer;">2x2x2</button>
+                        </div>
+                        
+                        <div style="display: flex; align-items: center; gap: 0.25rem;">
+                          <span style="font-size: 0.8rem; color: var(--text-muted);">Custom:</span>
+                          <input type="number" class="input-3d-dim input-3d-x" data-3d-target="${file.name}" value="1" min="1" max="5" style="width: 40px; background: #0f172a; border: 1px solid rgba(255,255,255,0.1); color: #fff; border-radius: 4px; padding: 0.25rem; font-size: 0.8rem; text-align: center;" />
+                          <span style="color: var(--text-muted); font-size: 0.8rem;">x</span>
+                          <input type="number" class="input-3d-dim input-3d-y" data-3d-target="${file.name}" value="1" min="1" max="5" style="width: 40px; background: #0f172a; border: 1px solid rgba(255,255,255,0.1); color: #fff; border-radius: 4px; padding: 0.25rem; font-size: 0.8rem; text-align: center;" />
+                          <span style="color: var(--text-muted); font-size: 0.8rem;">x</span>
+                          <input type="number" class="input-3d-dim input-3d-z" data-3d-target="${file.name}" value="1" min="1" max="5" style="width: 40px; background: #0f172a; border: 1px solid rgba(255,255,255,0.1); color: #fff; border-radius: 4px; padding: 0.25rem; font-size: 0.8rem; text-align: center;" />
+                          <button type="button" class="btn-3d-custom-cell" data-3d-target="${file.name}" style="background: var(--bg-card); border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 0.25rem 0.5rem; border-radius: 4px; font-size: 0.8rem; cursor: pointer;">Aplicar</button>
+                        </div>
+                        
+                        <div style="display: flex; align-items: center; gap: 0.25rem;">
+                          <span style="font-size: 0.8rem; color: var(--text-muted);">Estilo:</span>
+                          <select class="select-3d-style" data-3d-target="${file.name}" style="background: var(--bg-card); border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 0.25rem; border-radius: 4px; font-size: 0.8rem;">
+                            <option value="ball-and-stick">Bolas e Bastões</option>
+                            <option value="spacefill">Spacefill</option>
+                            <option value="wireframe">Wireframe</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  ` : ''}
+                  <pre style="max-height: 250px; overflow-y: auto;">${escapeHtml(file.content || "(arquivo vazio)")}</pre>
+                `
                 : "<p>Arquivo nao encontrado neste workflow.</p>"
           }
         </article>
@@ -743,6 +1004,125 @@ function bindFileEditors() {
         body: JSON.stringify(payload),
       });
       await selectWorkflow(state.selectedWorkflowId, false);
+    });
+  });
+}
+
+function bindPoscarActions() {
+  const fixBtn = document.querySelector("#btn-fix-collisions");
+  if (fixBtn) {
+    fixBtn.addEventListener("click", async () => {
+      fixBtn.disabled = true;
+      fixBtn.textContent = "Corrigindo...";
+      try {
+        const res = await request(`/workflows/${state.selectedWorkflowId}/fix-poscar`, {
+          method: "POST"
+        });
+        alert(`Sucesso! Colisoes corrigidas. Novo status: ${res.agent_status}.`);
+        await selectWorkflow(state.selectedWorkflowId, false);
+      } catch (err) {
+        alert("Erro ao corrigir: " + err.message);
+      } finally {
+        fixBtn.disabled = false;
+        fixBtn.textContent = "🔧 Corrigir Colisoes";
+      }
+    });
+  }
+
+  const exportBtn = document.querySelector("#btn-export-xyz");
+  if (exportBtn) {
+    exportBtn.addEventListener("click", () => {
+      const canvas = document.querySelector(".structure-viewer-canvas[id*='POSCAR']");
+      if (!canvas) {
+        alert("Arquivo POSCAR nao carregado na tela.");
+        return;
+      }
+      const content = decodeURIComponent(canvas.dataset.structureContent || "");
+      if (!content) {
+        alert("Conteudo do POSCAR vazio.");
+        return;
+      }
+      const xyz = convertPoscarToXyzSupercell(content, 1, 1, 1);
+      if (xyz && xyz.xyz) {
+        const blob = new Blob([xyz.xyz], { type: "text/plain;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `${state.workflows.find(w => w.workflow_id === state.selectedWorkflowId)?.project_name || 'structure'}.xyz`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      } else {
+        alert("Erro ao converter coordenadas para XYZ.");
+      }
+    });
+  }
+
+  const fixIncarBtn = document.querySelector("#btn-fix-incar");
+  if (fixIncarBtn) {
+    fixIncarBtn.addEventListener("click", async () => {
+      fixIncarBtn.disabled = true;
+      fixIncarBtn.textContent = "Corrigindo...";
+      try {
+        const res = await request(`/workflows/${state.selectedWorkflowId}/fix-incar`, {
+          method: "POST"
+        });
+        alert(`Sucesso! Parametros do INCAR atualizados. Novo status: ${res.agent_status}.`);
+        await selectWorkflow(state.selectedWorkflowId, false);
+      } catch (err) {
+        alert("Erro ao corrigir INCAR: " + err.message);
+      } finally {
+        fixIncarBtn.disabled = false;
+        fixIncarBtn.textContent = "🔧 Corrigir INCAR";
+      }
+    });
+  }
+
+  const fixKpointsBtn = document.querySelector("#btn-fix-kpoints");
+  if (fixKpointsBtn) {
+    fixKpointsBtn.addEventListener("click", async () => {
+      fixKpointsBtn.disabled = true;
+      fixKpointsBtn.textContent = "Gerando...";
+      try {
+        const res = await request(`/workflows/${state.selectedWorkflowId}/fix-kpoints`, {
+          method: "POST"
+        });
+        alert(`Sucesso! Malha KPOINTS gerada. Novo status: ${res.agent_status}.`);
+        await selectWorkflow(state.selectedWorkflowId, false);
+      } catch (err) {
+        alert("Erro ao gerar KPOINTS: " + err.message);
+      } finally {
+        fixKpointsBtn.disabled = false;
+        fixKpointsBtn.textContent = "🔧 Gerar Malha Recomendada";
+      }
+    });
+  }
+}
+
+function bindDescriptorTabs() {
+  document.querySelectorAll(".desc-tab-btn").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const parent = btn.closest(".mlff-descriptor-visual");
+      if (!parent) return;
+      
+      parent.querySelectorAll(".desc-tab-btn").forEach((b) => {
+        b.classList.remove("active");
+        b.style.background = "rgba(255, 255, 255, 0.05)";
+        b.style.color = "var(--text-muted)";
+      });
+      
+      btn.classList.add("active");
+      btn.style.background = "#6366f1";
+      btn.style.color = "#ffffff";
+      
+      parent.querySelectorAll(".descriptor-plot-item").forEach((item) => item.classList.add("hidden"));
+      
+      const target = btn.dataset.descTarget;
+      const targetItem = parent.querySelector(`#plot-item-${target}`);
+      if (targetItem) {
+        targetItem.classList.remove("hidden");
+      }
     });
   });
 }
@@ -825,6 +1205,17 @@ function parseKpointsMesh(formData) {
 
 async function loadWorkflows() {
   state.workflows = await request("/workflows");
+  
+  try {
+    const stats = await request("/workflows/stats");
+    document.getElementById("stat-total").textContent = stats.total_workflows;
+    document.getElementById("stat-running").textContent = stats.running_workflows;
+    document.getElementById("stat-converged").textContent = stats.converged_workflows;
+    document.getElementById("stat-steps").textContent = stats.avg_ionic_steps > 0 ? `${stats.avg_ionic_steps}` : "-";
+  } catch (err) {
+    console.error("Falha ao carregar estatisticas:", err);
+  }
+
   renderWorkflowList();
 
   const tabFromUrl = readTabFromUrl();
@@ -874,6 +1265,21 @@ async function selectWorkflow(workflowId, refreshList = true, historyMode = "pus
     : [];
   const [workflow, filePreviews] = await Promise.all([workflowPromise, filePreviewPromise, ...analysisPromises]);
   renderWorkflowDetails(workflow, filePreviews);
+  if (state.activeTab === "dos-bands") {
+    loadAndRenderDosBands();
+  }
+  if (state.activeTab === "neb") {
+    loadAndRenderNEB();
+  }
+  if (state.activeTab === "phonon") {
+    loadAndRenderPhonon();
+  }
+  if (state.activeTab === "elastic") {
+    loadAndRenderElastic();
+  }
+  if (state.activeTab === "pipeline") {
+    loadAndRenderPipeline();
+  }
 
   if (refreshList) {
     renderWorkflowList();
@@ -908,6 +1314,43 @@ if (workflowForm) {
     updateTemplateHint();
     state.selectedWorkflowId = workflow.workflow_id;
     await loadWorkflows();
+  });
+}
+
+if (importForm) {
+  importForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const formData = new FormData(importForm);
+    const payload = {
+      project_name: formData.get("project_name"),
+      calc_path: formData.get("calc_path"),
+      goal: formData.get("goal"),
+      executor: formData.get("executor"),
+    };
+
+    const submitBtn = importForm.querySelector('button[type="submit"]');
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Importando...";
+    }
+    
+    try {
+      const workflow = await request("/workflows/import", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+
+      importForm.reset();
+      state.selectedWorkflowId = workflow.workflow_id;
+      await loadWorkflows();
+    } catch (err) {
+      alert("Erro ao importar: " + err.message);
+    } finally {
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Importar pasta";
+      }
+    }
   });
 }
 
@@ -969,16 +1412,297 @@ if (calculationTypeSelect) {
   });
 }
 
+async function loadAndRenderDosBands() {
+  const workflowId = state.selectedWorkflowId;
+  if (!workflowId) return;
+
+  const dosContainer = document.getElementById("dos-chart-container");
+  const bandsContainer = document.getElementById("bands-chart-container");
+
+  if (dosContainer) {
+    dosContainer.innerHTML = `<span style="color: var(--text-muted);">Carregando dados de DOSCAR...</span>`;
+  }
+  if (bandsContainer) {
+    bandsContainer.innerHTML = `<span style="color: var(--text-muted);">Carregando dados de EIGENVAL...</span>`;
+  }
+
+  let originalFermi = 0.0;
+  let dosParsed = null;
+
+  try {
+    const dosText = await request(`/workflows/${workflowId}/file/DOSCAR`);
+    if (dosText) {
+      dosParsed = parseDOSCAR(dosText);
+      if (dosParsed) {
+        originalFermi = dosParsed.originalFermi;
+        renderDOSChart("dos-chart-container", dosParsed);
+      } else {
+        if (dosContainer) dosContainer.innerHTML = `<span style="color: var(--text-muted);">Formato de DOSCAR invalido ou nao reconhecido.</span>`;
+      }
+    }
+  } catch (err) {
+    if (dosContainer) dosContainer.innerHTML = `<span style="color: var(--text-muted);">DOSCAR nao gerado ou indisponivel para este calculo.</span>`;
+  }
+
+  try {
+    const eigenvalText = await request(`/workflows/${workflowId}/file/EIGENVAL`);
+    if (eigenvalText) {
+      const bandsParsed = parseEIGENVAL(eigenvalText, originalFermi);
+      if (bandsParsed) {
+        renderBandsChart("bands-chart-container", bandsParsed);
+      } else {
+        if (bandsContainer) bandsContainer.innerHTML = `<span style="color: var(--text-muted);">Formato de EIGENVAL invalido ou nao reconhecido.</span>`;
+      }
+    }
+  } catch (err) {
+    if (bandsContainer) bandsContainer.innerHTML = `<span style="color: var(--text-muted);">EIGENVAL nao gerado ou indisponivel para este calculo.</span>`;
+  }
+}
+
 tabButtons.forEach((button) => {
   button.addEventListener("click", () => {
     state.activeTab = button.dataset.tabTarget;
     renderActiveTab();
+    if (state.activeTab === "dos-bands") {
+      loadAndRenderDosBands();
+    }
+    if (state.activeTab === "neb") {
+      loadAndRenderNEB();
+    }
+    if (state.activeTab === "phonon") {
+      loadAndRenderPhonon();
+    }
+    if (state.activeTab === "elastic") {
+      loadAndRenderElastic();
+    }
+    if (state.activeTab === "pipeline") {
+      loadAndRenderPipeline();
+    }
     writeNavigationStateToUrl(
       { workflowId: state.selectedWorkflowId, tab: state.activeTab },
       { replace: false },
     );
   });
 });
+
+async function loadAndRenderPipeline() {
+  const workflowId = state.selectedWorkflowId;
+  if (!workflowId) return;
+
+  const selectEl = document.getElementById("pipeline-child-select");
+  const flowContainer = document.getElementById("pipeline-flow-container");
+
+  if (!selectEl || !flowContainer) return;
+
+  // 1. Populate child select dropdown with all OTHER workflows
+  const currentWf = state.workflows.find(w => w.workflow_id === workflowId);
+  const otherWorkflows = state.workflows.filter(w => w.workflow_id !== workflowId);
+  
+  selectEl.innerHTML = `
+    <option value="">Nenhum (Fim do Fluxo)</option>
+    ${otherWorkflows.map(w => `<option value="${w.workflow_id}">${w.project_name}</option>`).join('')}
+  `;
+
+  // 2. Fetch current chain child details
+  try {
+    const data = await request(`/workflows/${workflowId}/child`);
+    if (data && data.has_child) {
+      selectEl.value = data.child_id;
+      flowContainer.innerHTML = `
+        <div style="display: flex; flex-direction: column; align-items: center; gap: 0.75rem; width: 100%;">
+          <div style="background: rgba(99, 102, 241, 0.1); border: 1px solid #6366f1; padding: 0.75rem; border-radius: 6px; text-align: center; width: 100%; box-shadow: 0 2px 8px rgba(99,102,241,0.15);">
+            <strong style="color: #818cf8;">Pai:</strong> ${currentWf ? currentWf.project_name : 'Original'} <br/>
+            <span style="font-size: 0.8rem; color: var(--text-muted);">Status: ${currentWf ? currentWf.job_status : 'unknown'}</span>
+          </div>
+          <div style="color: #6366f1; font-size: 1.2rem; font-weight: bold; animation: bounce 1.5s infinite;">↓ (Auto-Iniciar)</div>
+          <div style="background: rgba(16, 185, 129, 0.1); border: 1px solid #10b981; padding: 0.75rem; border-radius: 6px; text-align: center; width: 100%; box-shadow: 0 2px 8px rgba(16,185,129,0.15);">
+            <strong style="color: #34d399;">Filho:</strong> ${data.project_name} <br/>
+            <span style="font-size: 0.8rem; color: var(--text-muted);">Status: ${data.job_status}</span>
+          </div>
+        </div>
+      `;
+    } else {
+      selectEl.value = "";
+      flowContainer.innerHTML = `<span style="color: var(--text-muted);">Nenhum vinculo configurado (este calculo encerra o fluxo).</span>`;
+    }
+  } catch (err) {
+    flowContainer.innerHTML = `<span style="color: var(--text-muted);">Erro ao obter dados de encadeamento.</span>`;
+  }
+
+  // 3. Bind save button action
+  const saveBtn = document.getElementById("btn-save-pipeline");
+  if (saveBtn) {
+    saveBtn.replaceWith(saveBtn.cloneNode(true));
+    const newSaveBtn = document.getElementById("btn-save-pipeline");
+    newSaveBtn.addEventListener("click", async () => {
+      const childId = selectEl.value;
+      newSaveBtn.disabled = true;
+      newSaveBtn.textContent = "Salvando...";
+      try {
+        if (childId) {
+          await request(`/workflows/${workflowId}/chain-with/${childId}`, { method: "POST" });
+          alert("Pipeline vinculado com sucesso!");
+        } else {
+          // If empty, we can just clear it or let it be
+          alert("Por favor, selecione um workflow para vincular.");
+        }
+        await loadAndRenderPipeline();
+      } catch (err) {
+        alert("Erro ao salvar vinculo: " + err.message);
+      } finally {
+        newSaveBtn.disabled = false;
+        newSaveBtn.textContent = "Vincular";
+      }
+    });
+  }
+}
+
+async function loadAndRenderElastic() {
+  const workflowId = state.selectedWorkflowId;
+  if (!workflowId) return;
+
+  const matrixContainer = document.getElementById("elastic-matrix-container");
+  const moduliContainer = document.getElementById("elastic-moduli-container");
+
+  if (matrixContainer) {
+    matrixContainer.innerHTML = `<span style="color: var(--text-muted);">Carregando matriz C_ij...</span>`;
+  }
+  if (moduliContainer) {
+    moduliContainer.innerHTML = `<span style="color: var(--text-muted);">Carregando modulos mecanicos...</span>`;
+  }
+
+  try {
+    const data = await request(`/workflows/${workflowId}/elastic-data`);
+    if (data) {
+      renderElasticData("elastic-matrix-container", "elastic-moduli-container", data);
+    }
+  } catch (err) {
+    if (matrixContainer) {
+      matrixContainer.innerHTML = `<span style="color: var(--text-muted);">Dados de elasticidade nao gerados ou indisponiveis para este calculo.</span>`;
+    }
+    if (moduliContainer) {
+      moduliContainer.innerHTML = `<span style="color: var(--text-muted);">Dados de elasticidade nao gerados ou indisponiveis para este calculo.</span>`;
+    }
+  }
+}
+
+async function loadAndRenderPhonon() {
+  const workflowId = state.selectedWorkflowId;
+  if (!workflowId) return;
+
+  const feContainer = document.getElementById("phonon-fe-chart-container");
+  const cvContainer = document.getElementById("phonon-cv-chart-container");
+
+  if (feContainer) {
+    feContainer.innerHTML = `<span style="color: var(--text-muted);">Carregando Energia Livre...</span>`;
+  }
+  if (cvContainer) {
+    cvContainer.innerHTML = `<span style="color: var(--text-muted);">Carregando Capacidade Termica...</span>`;
+  }
+
+  try {
+    const data = await request(`/workflows/${workflowId}/phonon-data`);
+    if (data) {
+      renderPhononCharts("phonon-fe-chart-container", "phonon-cv-chart-container", data);
+    }
+  } catch (err) {
+    if (feContainer) {
+      feContainer.innerHTML = `<span style="color: var(--text-muted);">Dados de fonons nao gerados ou indisponiveis para este calculo.</span>`;
+    }
+    if (cvContainer) {
+      cvContainer.innerHTML = `<span style="color: var(--text-muted);">Dados de fonons nao gerados ou indisponiveis para este calculo.</span>`;
+    }
+  }
+}
+
+async function loadAndRenderNEB() {
+  const workflowId = state.selectedWorkflowId;
+  if (!workflowId) return;
+
+  const container = document.getElementById("neb-chart-container");
+  if (container) {
+    container.innerHTML = `<span style="color: var(--text-muted);">Carregando dados de NEB...</span>`;
+  }
+
+  if (state.nebInterval) {
+    clearInterval(state.nebInterval);
+    state.nebInterval = null;
+  }
+
+  try {
+    const data = await request(`/workflows/${workflowId}/neb-data`);
+    if (data) {
+      state.nebData = data;
+      renderNEBChart("neb-chart-container", data, async (idx, imgName) => {
+        stopNEBAnimation();
+        try {
+          const poscar = await request(`/workflows/${workflowId}/file/${imgName}/POSCAR`);
+          init3DmolViewer("3dmol-POSCAR", poscar);
+        } catch (e) {}
+      });
+      bindNEBAnimationButtons();
+    }
+  } catch (err) {
+    if (container) {
+      container.innerHTML = `<span style="color: var(--text-muted);">Dados de NEB nao gerados ou indisponiveis para este calculo.</span>`;
+    }
+  }
+}
+
+function bindNEBAnimationButtons() {
+  const playBtn = document.getElementById("btn-play-neb");
+  const stopBtn = document.getElementById("btn-stop-neb");
+  const statusDiv = document.getElementById("neb-animation-status");
+
+  if (!playBtn || !stopBtn) return;
+
+  playBtn.replaceWith(playBtn.cloneNode(true));
+  stopBtn.replaceWith(stopBtn.cloneNode(true));
+
+  const newPlayBtn = document.getElementById("btn-play-neb");
+  const newStopBtn = document.getElementById("btn-stop-neb");
+
+  newPlayBtn.addEventListener("click", async () => {
+    if (!state.nebData || !state.nebData.images.length) return;
+    newPlayBtn.disabled = true;
+    newStopBtn.disabled = false;
+    if (statusDiv) statusDiv.textContent = "Baixando estruturas de transicao...";
+
+    try {
+      const promises = state.nebData.images.map(img => request(`/workflows/${state.selectedWorkflowId}/file/${img}/POSCAR`));
+      const poscars = await Promise.all(promises);
+
+      let currentIdx = 0;
+      if (statusDiv) statusDiv.textContent = `Animando... (Imagem ${state.nebData.images[currentIdx]})`;
+      
+      state.nebInterval = setInterval(() => {
+        init3DmolViewer("3dmol-POSCAR", poscars[currentIdx]);
+        if (statusDiv) statusDiv.textContent = `Animando... (Imagem ${state.nebData.images[currentIdx]})`;
+        currentIdx = (currentIdx + 1) % poscars.length;
+      }, 700);
+    } catch (err) {
+      alert("Erro ao baixar estruturas para animacao: " + err.message);
+      stopNEBAnimation();
+    }
+  });
+
+  newStopBtn.addEventListener("click", () => {
+    stopNEBAnimation();
+  });
+}
+
+function stopNEBAnimation() {
+  if (state.nebInterval) {
+    clearInterval(state.nebInterval);
+    state.nebInterval = null;
+  }
+  const playBtn = document.getElementById("btn-play-neb");
+  const stopBtn = document.getElementById("btn-stop-neb");
+  const statusDiv = document.getElementById("neb-animation-status");
+  if (playBtn) playBtn.disabled = false;
+  if (stopBtn) stopBtn.disabled = true;
+  if (statusDiv) statusDiv.textContent = "Animacao parada.";
+}
 
 if (bindingEnergyButton && bindingReferenceSelect && bindingEnergyResult) {
   bindingEnergyButton.addEventListener("click", async () => {
@@ -1156,3 +1880,26 @@ if (templateSelect) {
 }
 
 updateRemoteSettingsVisibility();
+
+async function loadExecutionLogs(workflowId) {
+  const logsEl = document.querySelector("#execution-logs");
+  if (!logsEl || !workflowId) return;
+  try {
+    const res = await request(`/workflows/${workflowId}/logs`);
+    if (res && typeof res.logs === "string") {
+      logsEl.textContent = res.logs;
+      logsEl.scrollTop = logsEl.scrollHeight;
+    }
+  } catch (err) {
+    console.error("Erro ao carregar logs:", err);
+  }
+}
+
+setInterval(() => {
+  if (state.selectedWorkflowId) {
+    const activePanel = document.querySelector(".tab-panel.active");
+    if (activePanel && activePanel.dataset.tabPanel === "history") {
+      loadExecutionLogs(state.selectedWorkflowId);
+    }
+  }
+}, 2000);

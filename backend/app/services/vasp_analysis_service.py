@@ -14,7 +14,7 @@ from .vasp_parser import (
 
 
 class VaspAnalysisService:
-    def analyze_workflow(self, calc_path: str) -> list[dict[str, object]]:
+    def analyze_workflow(self, calc_path: str, goal: str | None = None) -> list[dict[str, object]]:
         root = Path(calc_path).expanduser().resolve()
         if not root.exists():
             raise FileNotFoundError(f"Diretorio nao encontrado: {root}")
@@ -24,6 +24,21 @@ class VaspAnalysisService:
         dos_ready = self._dos_ready_check(root)
         phonon_ready = self._phonon_ready_check(root)
         mlff_quality = self._mlff_quality_check(root)
+        mlff_validation = self._mlff_validation_check(root)
+        mlff_descriptor = self._mlff_descriptor_scan(root)
+        poscar_semantic = self._poscar_semantic_check(root)
+        
+        lattice_lengths = poscar_semantic.get("details", {}).get("lattice_lengths")
+        incar_semantic = self._incar_semantic_check(root, goal)
+        kpoints_semantic = self._kpoints_semantic_check(root, lattice_lengths)
+        
+        incar_tags = None
+        if (root / "INCAR").exists():
+            from .incar_validator import IncarValidator
+            incar_tags = IncarValidator.parse_incar(root / "INCAR")
+        potcar_semantic = self._potcar_semantic_check(root, incar_tags)
+        error_recovery = self._error_recovery_check(root)
+        
         neb_path = self._neb_path_check(root)
         band_gap = self._band_gap_check(root)
         regression_check = self._regression_check(root, energy_summary, structure_diff)
@@ -45,6 +60,13 @@ class VaspAnalysisService:
             dos_ready,
             phonon_ready,
             mlff_quality,
+            mlff_validation,
+            mlff_descriptor,
+            poscar_semantic,
+            incar_semantic,
+            kpoints_semantic,
+            potcar_semantic,
+            error_recovery,
             neb_path,
             band_gap,
             regression_check,
@@ -290,9 +312,23 @@ class VaspAnalysisService:
             status = "warning"
             summary = "O melhor proximo passo ainda e concluir a relaxacao estrutural."
         elif has_chgcar and has_contcar and not has_wavecar:
-            recommended = "rodar_dos"
-            status = "ready"
-            summary = "A geometria parece madura; o proximo calculo mais forte e uma etapa de DOS."
+            is_already_dos = False
+            incar_path = root / "INCAR"
+            if incar_path.exists():
+                from .incar_validator import IncarValidator
+                tags = IncarValidator.parse_incar(incar_path)
+                # Check if tags specify ICHARG = 11 or if we have NEDOS
+                if tags.get("ICHARG") == "11" or tags.get("NEDOS") is not None:
+                    is_already_dos = True
+            
+            if is_already_dos and phonon_ready.get("status") == "ready":
+                recommended = "rodar_phonons"
+                status = "ready"
+                summary = "Calculo de DOS concluido. A estrutura esta estavel o suficiente para partir para phonons."
+            else:
+                recommended = "rodar_dos"
+                status = "ready"
+                summary = "A geometria parece madura; o proximo calculo mais forte e uma etapa de DOS."
         elif phonon_ready.get("status") == "ready":
             recommended = "rodar_phonons"
             status = "ready"
@@ -363,6 +399,381 @@ class VaspAnalysisService:
                 "min_reference_count": min_reference_count,
                 "ready_for_production": ready_for_production,
             },
+        }
+
+    @staticmethod
+    def _get_natoms_from_poscar(poscar_path: Path) -> int:
+        try:
+            with open(poscar_path, "r", encoding="utf-8", errors="ignore") as f:
+                lines = [f.readline().strip() for _ in range(10)]
+            for line in lines[5:8]:
+                parts = line.split()
+                if parts and all(p.isdigit() for p in parts):
+                    return sum(int(p) for p in parts)
+        except Exception:
+            pass
+        return 42
+
+    @staticmethod
+    def _get_energy_outcar(filename: Path) -> float:
+        energy = None
+        pattern = re.compile(r"free\s+energy(?:\s+ML)?\s+TOTEN\s*=\s*([-+0-9.Ee]+)", re.IGNORECASE)
+        with open(filename, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                match = pattern.search(line)
+                if match:
+                    energy = float(match.group(1))
+        if energy is None:
+            raise RuntimeError(f"Nenhuma energia encontrada em {filename.name}")
+        return energy
+
+    @staticmethod
+    def _get_forces_outcar(filename: Path, natoms: int) -> list[list[float]]:
+        forces = []
+        found = False
+        with open(filename, "r", encoding="utf-8", errors="ignore") as f:
+            lines = f.readlines()
+        for idx in range(len(lines) - 1, -1, -1):
+            if "TOTAL-FORCE" in lines[idx]:
+                start_idx = idx + 2
+                for j in range(start_idx, start_idx + natoms):
+                    parts = lines[j].split()
+                    fx = float(parts[3])
+                    fy = float(parts[4])
+                    fz = float(parts[5])
+                    forces.append([fx, fy, fz])
+                found = True
+                break
+        if not found:
+            raise RuntimeError(f"TOTAL-FORCE nao encontrado em {filename.name}")
+        return forces
+
+    def _mlff_validation_check(self, root: Path) -> dict[str, object]:
+        teste_configs_dir = root / "teste_configs"
+        if not teste_configs_dir.exists():
+            return {
+                "tool": "mlff_validation_check",
+                "title": "Validacao de Paridade MLFF vs DFT",
+                "status": "unavailable",
+                "summary": "Diretorio 'teste_configs' nao encontrado para esta etapa.",
+                "details": {
+                    "has_configs": False
+                }
+            }
+
+        try:
+            import numpy as np
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+            
+            configs = sorted([d.name for d in teste_configs_dir.iterdir() if d.is_dir() and d.name.startswith("config_")])
+            if not configs:
+                return {
+                    "tool": "mlff_validation_check",
+                    "title": "Validacao de Paridade MLFF vs DFT",
+                    "status": "warning",
+                    "summary": "Nenhum diretorio 'config_*' encontrado dentro de teste_configs.",
+                    "details": {
+                        "has_configs": False
+                    }
+                }
+
+            natoms = 42
+            first_poscar = teste_configs_dir / configs[0] / "DFT" / "POSCAR"
+            if first_poscar.exists():
+                natoms = self._get_natoms_from_poscar(first_poscar)
+
+            energies_dft = []
+            energies_mlff = []
+            forces_dft = []
+            forces_mlff = []
+
+            for cfg in configs:
+                dft_outcar = teste_configs_dir / cfg / "DFT" / "OUTCAR"
+                mlff_outcar = teste_configs_dir / cfg / "MLFF" / "OUTCAR"
+
+                if dft_outcar.exists() and mlff_outcar.exists():
+                    try:
+                        e_dft = self._get_energy_outcar(dft_outcar)
+                        e_mlff = self._get_energy_outcar(mlff_outcar)
+                        f_dft = self._get_forces_outcar(dft_outcar, natoms)
+                        f_mlff = self._get_forces_outcar(mlff_outcar, natoms)
+
+                        energies_dft.append(e_dft)
+                        energies_mlff.append(e_mlff)
+                        forces_dft.append(f_dft)
+                        forces_mlff.append(f_mlff)
+                    except Exception:
+                        continue
+
+            if not energies_dft:
+                return {
+                    "tool": "mlff_validation_check",
+                    "title": "Validacao de Paridade MLFF vs DFT",
+                    "status": "warning",
+                    "summary": "Falha ao extrair energias/forcas dos arquivos OUTCAR.",
+                    "details": {
+                        "has_configs": True,
+                        "extracted_count": 0
+                    }
+                }
+
+            energies_dft = np.array(energies_dft)
+            energies_mlff = np.array(energies_mlff)
+
+            errors_en = energies_mlff - energies_dft
+            rmse_en = float(np.sqrt(np.mean(errors_en**2)))
+            mae_en = float(np.mean(np.abs(errors_en)))
+            max_error_en = float(np.max(np.abs(errors_en)))
+            r2_en = float(np.corrcoef(energies_dft, energies_mlff)[0, 1]**2) if len(energies_dft) > 1 else 1.0
+
+            forces_dft = np.array(forces_dft)
+            forces_mlff = np.array(forces_mlff)
+            fdft_flat = forces_dft.flatten()
+            fmlff_flat = forces_mlff.flatten()
+
+            errors_f = fmlff_flat - fdft_flat
+            rmse_f = float(np.sqrt(np.mean(errors_f**2)))
+            mae_f = float(np.mean(np.abs(errors_f)))
+            max_error_f = float(np.max(np.abs(errors_f)))
+            r2_f = float(np.corrcoef(fdft_flat, fmlff_flat)[0, 1]**2) if len(fdft_flat) > 1 else 1.0
+
+            # Plot Energy Parity
+            plt.figure(figsize=(6, 5))
+            plt.scatter(energies_dft, energies_mlff, color='#6366f1', alpha=0.8, s=60, edgecolors='white', linewidth=0.5)
+            xmin_en = min(energies_dft.min(), energies_mlff.min())
+            xmax_en = max(energies_dft.max(), energies_mlff.max())
+            margin_en = 0.05 * (xmax_en - xmin_en) if xmax_en != xmin_en else 1.0
+            plt.plot([xmin_en - margin_en, xmax_en + margin_en], [xmin_en - margin_en, xmax_en + margin_en], "--", color='#ef4444', linewidth=1.5, label="Ideal")
+            plt.xlabel("Energia DFT (eV)", fontsize=10, fontweight='bold', color='#374151')
+            plt.ylabel("Energia MLFF (eV)", fontsize=10, fontweight='bold', color='#374151')
+            plt.title(f"Paridade de Energia (DFT vs MLFF)\nRMSE = {rmse_en:.5f} eV | R^2 = {r2_en:.5f}", fontsize=11, fontweight='bold', color='#1f2937')
+            plt.grid(True, linestyle=':', alpha=0.6)
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig(root / "energy_parity_comparison.png", dpi=200)
+            plt.close()
+
+            # Plot Force Parity
+            plt.figure(figsize=(6, 5))
+            plt.scatter(fdft_flat, fmlff_flat, color='#10b981', alpha=0.3, s=8)
+            xmin_f = min(fdft_flat.min(), fmlff_flat.min())
+            xmax_f = max(fdft_flat.max(), fmlff_flat.max())
+            margin_f = 0.05 * (xmax_f - xmin_f) if xmax_f != xmin_f else 1.0
+            plt.plot([xmin_f - margin_f, xmax_f + margin_f], [xmin_f - margin_f, xmax_f + margin_f], "--", color='#ef4444', linewidth=1.5, label="Ideal")
+            plt.xlabel("Forca DFT (eV/A)", fontsize=10, fontweight='bold', color='#374151')
+            plt.ylabel("Forca MLFF (eV/A)", fontsize=10, fontweight='bold', color='#374151')
+            plt.title(f"Paridade de Forcas (DFT vs MLFF)\nRMSE = {rmse_f:.5f} eV/A | R^2 = {r2_f:.5f}", fontsize=11, fontweight='bold', color='#1f2937')
+            plt.grid(True, linestyle=':', alpha=0.6)
+            plt.legend()
+            plt.tight_layout()
+            plt.savefig(root / "force_parity_comparison.png", dpi=200)
+            plt.close()
+
+            return {
+                "tool": "mlff_validation_check",
+                "title": "Validacao de Paridade MLFF vs DFT",
+                "status": "ready",
+                "summary": f"Validacao concluida com {len(energies_dft)} configuracoes. R^2 de forcas = {r2_f:.4f}.",
+                "details": {
+                    "config_count": len(configs),
+                    "energy_rmse_ev": round(rmse_en, 6),
+                    "energy_mae_ev": round(mae_en, 6),
+                    "energy_r2": round(r2_en, 6),
+                    "force_rmse_ev_ang": round(rmse_f, 6),
+                    "force_mae_ev_ang": round(mae_f, 6),
+                    "force_r2": round(r2_f, 6),
+                    "force_max_error_ev_ang": round(max_error_f, 6),
+                    "energy_plot": "energy_parity_comparison.png",
+                    "force_plot": "force_parity_comparison.png"
+                }
+            }
+
+        except Exception as e:
+            return {
+                "tool": "mlff_validation_check",
+                "title": "Validacao de Paridade MLFF vs DFT",
+                "status": "failed",
+                "summary": f"Erro durante analise de paridade: {str(e)}",
+                "details": {}
+            }
+
+    def _mlff_descriptor_scan(self, root: Path) -> dict[str, object]:
+        descritores = ["RCUT1", "RCUT2", "ML_WFORCE", "ML_WTOTEN", "ML_CDOUB", "ML_CTIFOR"]
+        found_descriptors = [d for d in descritores if (root / d).exists()]
+        if not found_descriptors:
+            return {
+                "tool": "mlff_descriptor_scan",
+                "title": "Varredura de Parametros MLFF",
+                "status": "unavailable",
+                "summary": "Nenhum diretorio de descritor (RCUT1, RCUT2, etc.) encontrado para esta etapa.",
+                "details": {}
+            }
+
+        try:
+            import numpy as np
+            import matplotlib
+            matplotlib.use('Agg')
+            import matplotlib.pyplot as plt
+
+            summary_data = {}
+            generated_plots = {}
+
+            for descritor in found_descriptors:
+                pasta = root / descritor
+                valores = []
+                rmse_energy = []
+                rmse_force = []
+                rmse_stress = []
+                
+                subdirs = []
+                for item in pasta.iterdir():
+                    if item.is_dir():
+                        try:
+                            val = float(item.name)
+                            subdirs.append((val, item))
+                        except ValueError:
+                            continue
+                
+                subdirs = sorted(subdirs, key=lambda x: x[0])
+                
+                for val, camin in subdirs:
+                    logfile = camin / "ML_LOGFILE"
+                    if not logfile.exists():
+                        continue
+                    
+                    ultimo = None
+                    with open(logfile, "r", encoding="utf-8", errors="ignore") as f:
+                        for linha in f:
+                            if linha.startswith("ERR"):
+                                dados = linha.split()
+                                if len(dados) >= 5:
+                                    ultimo = dados
+                                    
+                    if ultimo is not None:
+                        valores.append(val)
+                        rmse_energy.append(float(ultimo[2]))
+                        rmse_force.append(float(ultimo[3]))
+                        rmse_stress.append(float(ultimo[4]))
+
+                if not valores:
+                    continue
+
+                best_energy_idx = rmse_energy.index(min(rmse_energy))
+                best_force_idx = rmse_force.index(min(rmse_force))
+
+                # Plot Force
+                plt.figure(figsize=(5, 3.5))
+                plt.plot(valores, rmse_force, "o-", color='#10b981', linewidth=2, label="RMSE Forca")
+                plt.scatter(valores[best_force_idx], rmse_force[best_force_idx], color='#ef4444', s=100, zorder=5, label=f"Melhor = {valores[best_force_idx]}")
+                plt.xlabel(descritor, fontsize=9, fontweight='bold')
+                plt.ylabel("RMSE Forca (eV/A)", fontsize=9, fontweight='bold')
+                plt.title(f"Ajuste de {descritor} (Forcas)", fontsize=10, fontweight='bold')
+                plt.grid(True, linestyle=':', alpha=0.6)
+                plt.legend()
+                plt.tight_layout()
+                force_plot_filename = f"{descritor}_force.png"
+                plt.savefig(root / force_plot_filename, dpi=200)
+                plt.close()
+
+                # Plot Energy
+                plt.figure(figsize=(5, 3.5))
+                plt.plot(valores, rmse_energy, "o-", color='#6366f1', linewidth=2, label="RMSE Energia")
+                plt.scatter(valores[best_energy_idx], rmse_energy[best_energy_idx], color='#ef4444', s=100, zorder=5, label=f"Melhor = {valores[best_energy_idx]}")
+                plt.xlabel(descritor, fontsize=9, fontweight='bold')
+                plt.ylabel("RMSE Energia (eV/atomo)", fontsize=9, fontweight='bold')
+                plt.title(f"Ajuste de {descritor} (Energia)", fontsize=10, fontweight='bold')
+                plt.grid(True, linestyle=':', alpha=0.6)
+                plt.legend()
+                plt.tight_layout()
+                energy_plot_filename = f"{descritor}_energy.png"
+                plt.savefig(root / energy_plot_filename, dpi=200)
+                plt.close()
+
+                summary_data[descritor] = {
+                    "best_energy_val": valores[best_energy_idx],
+                    "best_energy_rmse": round(rmse_energy[best_energy_idx], 6),
+                    "best_force_val": valores[best_force_idx],
+                    "best_force_rmse": round(rmse_force[best_force_idx], 6),
+                    "tested_values": valores
+                }
+                generated_plots[descritor] = {
+                    "force_plot": force_plot_filename,
+                    "energy_plot": energy_plot_filename
+                }
+
+            if not summary_data:
+                return {
+                    "tool": "mlff_descriptor_scan",
+                    "title": "Varredura de Parametros MLFF",
+                    "status": "warning",
+                    "summary": "Diretorios de descritores encontrados, mas sem ML_LOGFILEs validos.",
+                    "details": {}
+                }
+
+            opt_summary = "Varredura concluida. " + ", ".join([f"{k} (F_otimo={v['best_force_val']})" for k, v in summary_data.items()])
+
+            return {
+                "tool": "mlff_descriptor_scan",
+                "title": "Varredura de Parametros MLFF",
+                "status": "ready",
+                "summary": opt_summary,
+                "details": {
+                    "summary_data": summary_data,
+                    "generated_plots": generated_plots
+                }
+            }
+
+        except Exception as e:
+            return {
+                "tool": "mlff_descriptor_scan",
+                "title": "Varredura de Parametros MLFF",
+                "status": "failed",
+                "summary": f"Erro durante varredura de descritores: {str(e)}",
+                "details": {}
+            }
+
+    def _poscar_semantic_check(self, root: Path) -> dict[str, object]:
+        poscar_path = root / "POSCAR"
+        if not poscar_path.exists():
+            return {
+                "tool": "poscar_semantic_check",
+                "title": "Validador Semantico de POSCAR",
+                "status": "unavailable",
+                "summary": "Arquivo POSCAR nao encontrado para inspecao.",
+                "details": {}
+            }
+
+        from .poscar_validator import PoscarValidator
+        res = PoscarValidator.validate(poscar_path)
+        
+        details = {
+            "valid": res["valid"],
+            "min_distance_ang": res["min_distance_ang"],
+            "colliding_count": len(res["colliding_pairs"]),
+            "lattice_lengths": list(res["lattice_lengths"]),
+            "lattice_angles": list(res["lattice_angles"]),
+            "crystal_system": res["crystal_system"],
+            "vacuum_thickness_ang": res["vacuum_thickness_ang"],
+            "errors": res["errors"]
+        }
+
+        if not res["valid"]:
+            return {
+                "tool": "poscar_semantic_check",
+                "title": "Validador Semantico de POSCAR",
+                "status": "failed",
+                "summary": f"Sobreposicao atômica detectada! Distancia minima: {res['min_distance_ang']} A.",
+                "details": details
+            }
+        
+        return {
+            "tool": "poscar_semantic_check",
+            "title": "Validador Semantico de POSCAR",
+            "status": "ready",
+            "summary": f"Estrutura ({res['crystal_system']}) consistente. Distancia minima: {res['min_distance_ang']} A.",
+            "details": details
         }
 
     def _neb_path_check(self, root: Path) -> dict[str, object]:
@@ -503,3 +914,95 @@ class VaspAnalysisService:
             if all(abs(value) <= 10 for value in coords):
                 coordinates.append(coords)
         return coordinates
+
+    def _incar_semantic_check(self, root: Path, goal: str | None = None) -> dict[str, object]:
+        incar_path = root / "INCAR"
+        if not incar_path.exists():
+            return {
+                "tool": "incar_semantic_check",
+                "title": "Validador de INCAR",
+                "status": "unavailable",
+                "summary": "Arquivo INCAR nao encontrado.",
+                "details": {}
+            }
+
+        from .incar_validator import IncarValidator
+        res = IncarValidator.validate(incar_path, goal=goal or "relax")
+        return {
+            "tool": "incar_semantic_check",
+            "title": "Validador de INCAR",
+            "status": "ready" if res["valid"] else "warning",
+            "summary": "Parametros do INCAR compativeis com o objetivo." if res["valid"] else f"Inconsistencias detectadas no INCAR: {', '.join(res['warnings'])}",
+            "details": res
+        }
+
+    def _kpoints_semantic_check(self, root: Path, lattice_lengths: tuple[float, float, float] | None = None) -> dict[str, object]:
+        kpoints_path = root / "KPOINTS"
+        if not kpoints_path.exists():
+            return {
+                "tool": "kpoints_semantic_check",
+                "title": "Validador de KPOINTS",
+                "status": "unavailable",
+                "summary": "Arquivo KPOINTS nao encontrado.",
+                "details": {}
+            }
+
+        if not lattice_lengths or lattice_lengths == (0.0, 0.0, 0.0):
+            poscar_path = root / "POSCAR"
+            if poscar_path.exists():
+                from .poscar_validator import PoscarValidator
+                pos_res = PoscarValidator.validate(poscar_path)
+                lattice_lengths = pos_res.get("lattice_lengths")
+            
+        if not lattice_lengths or lattice_lengths == (0.0, 0.0, 0.0):
+            return {
+                "tool": "kpoints_semantic_check",
+                "title": "Validador de KPOINTS",
+                "status": "unavailable",
+                "summary": "POSCAR indisponivel para medir malha do KPOINTS.",
+                "details": {}
+            }
+
+        from .kpoints_validator import KpointsValidator
+        res = KpointsValidator.validate(kpoints_path, lattice_lengths)
+        return {
+            "tool": "kpoints_semantic_check",
+            "title": "Validador de KPOINTS",
+            "status": "ready" if res["valid"] else "warning",
+            "summary": "Malha de KPOINTS saudavel e convergente." if res["valid"] else f"Alertas de malha KPOINTS: {', '.join(res['warnings'])}",
+            "details": res
+        }
+
+    def _potcar_semantic_check(self, root: Path, incar_tags: dict[str, str] | None = None) -> dict[str, object]:
+        potcar_path = root / "POTCAR"
+        poscar_path = root / "POSCAR"
+        
+        if not potcar_path.exists():
+            return {
+                "tool": "potcar_semantic_check",
+                "title": "Validador de POTCAR",
+                "status": "unavailable",
+                "summary": "Arquivo POTCAR nao encontrado.",
+                "details": {}
+            }
+
+        from .potcar_validator import PotcarValidator
+        res = PotcarValidator.validate(potcar_path, poscar_path, incar_tags)
+        return {
+            "tool": "potcar_semantic_check",
+            "title": "Validador de POTCAR",
+            "status": "ready" if res["valid"] else ("failed" if res["critical"] else "warning"),
+            "summary": "Sequencia de pseudopotenciais e cutoff corretos." if res["valid"] else f"Alertas do POTCAR: {', '.join(res['warnings'])}",
+            "details": res
+        }
+
+    def _error_recovery_check(self, root: Path) -> dict[str, object]:
+        from .error_recovery import ErrorRecoveryService
+        res = ErrorRecoveryService.detect_and_fix_errors(root)
+        return {
+            "tool": "error_recovery_check",
+            "title": "Auto-Recuperacao de Erros (Self-Healing)",
+            "status": "ready" if not res["error_detected"] else "warning",
+            "summary": res["message"],
+            "details": res
+        }
