@@ -1,10 +1,20 @@
 # Workflow VASP AI Assistant
 
+[![CI](https://github.com/wandszera/workflow-vasp/actions/workflows/ci.yml/badge.svg)](https://github.com/wandszera/workflow-vasp/actions/workflows/ci.yml)
+
 An intelligent assistant and expert agent for DFT (Density Functional Theory) workflows with VASP. The system's focus is to automate and reduce manual intervention in recurring calculations, covering directory inspection, error/convergence detection, suggestion/application of corrections, and orchestration of multiple adaptive steps.
 
 ---
 
 ## 🚀 System Scope
+
+## 🔑 Autenticação
+
+Para proteger a API em ambiente de rede, defina `VASP_API_KEY`. As rotas de API exigem o header `X-API-Key`; as páginas públicas permanecem acessíveis. Sem essa variável, a autenticação fica desativada para desenvolvimento local.
+
+```bash
+export VASP_API_KEY="sua-chave-secreta-aqui"
+```
 
 This project implements:
 - **FastAPI API:** Unified interface for workflow control, cluster monitoring, physical analysis, and agent recommendations.

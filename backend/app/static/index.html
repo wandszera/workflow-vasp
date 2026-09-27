@@ -65,9 +65,10 @@
 
           <label>
             Executor
-            <select name="executor">
+            <select name="executor" id="executor-select">
               <option value="mock">mock</option>
               <option value="ssh_slurm">ssh_slurm</option>
+              <option value="mlff_training">mlff_training</option>
             </select>
           </label>
 
@@ -159,13 +160,61 @@
           </label>
 
           <button type="submit">Criar workflow</button>
+      </section>
+
+      <section class="panel form-panel import-panel">
+        <div class="panel-heading">
+          <h2>Importar Pasta Local</h2>
+          <p>Cadastre e analise um diretorio de calculo local existente (ex: descriptores_test).</p>
+        </div>
+        <form id="import-form">
+          <label>
+            Nome do projeto
+            <input type="text" name="project_name" placeholder="ex: pd_descriptores" required>
+          </label>
+          <label>
+            Caminho absoluto da pasta
+            <input type="text" name="calc_path" placeholder="ex: C:\Users\wand\Documents\Doutorado\descriptores_test" required>
+          </label>
+          <label>
+            Objetivo do calculo
+            <input type="text" name="goal" placeholder="ex: mlff training" required>
+          </label>
+          <label>
+            Tipo de executor
+            <select name="executor">
+              <option value="mlff_training">mlff_training</option>
+              <option value="ssh_slurm">ssh_slurm</option>
+              <option value="mock">mock</option>
+            </select>
+          </label>
+          <button type="submit">Importar pasta</button>
         </form>
       </section>
+
 
       <section class="panel list-panel">
         <div class="panel-heading">
           <h2>Workflows</h2>
           <p>Selecione um workflow para acompanhar a execucao, revisar o plano e abrir os arquivos do job.</p>
+        </div>
+        <div id="stats-panel" class="stats-panel" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem; margin-bottom: 1rem; background: rgba(255,255,255,0.02); padding: 0.75rem; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
+          <div style="display: flex; flex-direction: column;">
+            <span style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Workflows</span>
+            <strong id="stat-total" style="font-size: 1.1rem; color: #fff; font-family: 'Outfit', sans-serif;">-</strong>
+          </div>
+          <div style="display: flex; flex-direction: column;">
+            <span style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Ativos</span>
+            <strong id="stat-running" style="font-size: 1.1rem; color: #6366f1; font-family: 'Outfit', sans-serif;">-</strong>
+          </div>
+          <div style="display: flex; flex-direction: column;">
+            <span style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Convergidos</span>
+            <strong id="stat-converged" style="font-size: 1.1rem; color: #10b981; font-family: 'Outfit', sans-serif;">-</strong>
+          </div>
+          <div style="display: flex; flex-direction: column;">
+            <span style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Passos Medios</span>
+            <strong id="stat-steps" style="font-size: 1.1rem; color: #f59e0b; font-family: 'Outfit', sans-serif;">-</strong>
+          </div>
         </div>
         <div id="workflow-list" class="workflow-list"></div>
       </section>
@@ -220,6 +269,11 @@
             <button class="tab-button active" type="button" data-tab-target="overview">Visao geral</button>
             <button class="tab-button" type="button" data-tab-target="job">Job</button>
             <button class="tab-button" type="button" data-tab-target="history">Timeline</button>
+            <button class="tab-button" type="button" data-tab-target="dos-bands">DOS & Bandas</button>
+            <button class="tab-button" type="button" data-tab-target="neb">NEB (Difusao)</button>
+            <button class="tab-button" type="button" data-tab-target="phonon">Fonons (Termodinamica)</button>
+            <button class="tab-button" type="button" data-tab-target="elastic">Elasticidade</button>
+            <button class="tab-button" type="button" data-tab-target="pipeline">Pipeline</button>
           </div>
 
           <section class="tab-panel active" data-tab-panel="overview">
@@ -266,12 +320,135 @@
               </div>
               <div id="history-list" class="history-list"></div>
             </article>
+
+            <article class="detail-card" style="margin-top: 1.5rem;">
+              <h3>Logs de Execucao em Tempo Real</h3>
+              <pre id="execution-logs" style="background: #0f172a; padding: 1rem; border-radius: 8px; max-height: 300px; overflow-y: auto; font-family: monospace; font-size: 0.9rem; border: 1px solid rgba(255,255,255,0.1); color: #38bdf8;"></pre>
+            </article>
+          </section>
+
+          <section class="tab-panel" data-tab-panel="dos-bands">
+            <div class="detail-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.5rem; margin-top: 1rem;">
+              <article class="detail-card">
+                <h3>Densidade de Estados (DOS)</h3>
+                <div id="dos-chart-container" style="width: 100%; min-height: 300px; display: flex; justify-content: center; align-items: center; background: #0f172a; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); margin-top: 1rem; position: relative;">
+                  <span style="color: var(--text-muted);">DOSCAR nao gerado ou indisponivel para este calculo.</span>
+                </div>
+              </article>
+
+              <article class="detail-card">
+                <h3>Estrutura de Bandas Eletronicas</h3>
+                <div id="bands-chart-container" style="width: 100%; min-height: 300px; display: flex; justify-content: center; align-items: center; background: #0f172a; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); margin-top: 1rem; position: relative;">
+                  <span style="color: var(--text-muted);">EIGENVAL nao gerado ou indisponivel para este calculo.</span>
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <section class="tab-panel" data-tab-panel="neb">
+            <div class="detail-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.5rem; margin-top: 1rem;">
+              <article class="detail-card">
+                <h3>Caminho de Minima Energia (MEP)</h3>
+                <div id="neb-chart-container" style="width: 100%; min-height: 300px; display: flex; justify-content: center; align-items: center; background: #0f172a; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); margin-top: 1rem; position: relative;">
+                  <span style="color: var(--text-muted);">Dados de NEB nao gerados ou indisponiveis.</span>
+                </div>
+              </article>
+
+              <article class="detail-card">
+                <h3>Controle de Animacao 3D</h3>
+                <div style="margin-top: 1rem; display: flex; flex-direction: column; gap: 1rem;">
+                  <div style="font-size: 0.9rem; color: var(--text-muted);">
+                    Clique no botao abaixo para animar a migracao atomica entre as imagens na tela 3D.
+                  </div>
+                  <div style="display: flex; gap: 0.5rem;">
+                    <button type="button" id="btn-play-neb" style="background: #10b981; border: 1px solid #10b981; color: #fff; padding: 0.6rem 1.2rem; border-radius: 6px; font-weight: 600; cursor: pointer; transition: all 0.2s;">
+                      ▶️ Animar Caminho
+                    </button>
+                    <button type="button" id="btn-stop-neb" style="background: #ef4444; border: 1px solid #ef4444; color: #fff; padding: 0.6rem 1.2rem; border-radius: 6px; font-weight: 600; cursor: pointer; transition: all 0.2s;" disabled>
+                      ⏹️ Parar
+                    </button>
+                  </div>
+                  <div id="neb-animation-status" style="font-size: 0.85rem; color: #10b981; font-weight: 600;"></div>
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <section class="tab-panel" data-tab-panel="phonon">
+            <div class="detail-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.5rem; margin-top: 1rem;">
+              <article class="detail-card">
+                <h3>Energia Livre (kJ/mol) & Entropia (J/K/mol) vs T</h3>
+                <div id="phonon-fe-chart-container" style="width: 100%; min-height: 300px; display: flex; justify-content: center; align-items: center; background: #0f172a; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); margin-top: 1rem; position: relative;">
+                  <span style="color: var(--text-muted);">Dados de fonons nao gerados ou indisponiveis.</span>
+                </div>
+              </article>
+
+              <article class="detail-card">
+                <h3>Capacidade Termica Cv (J/K/mol) vs T</h3>
+                <div id="phonon-cv-chart-container" style="width: 100%; min-height: 300px; display: flex; justify-content: center; align-items: center; background: #0f172a; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); margin-top: 1rem; position: relative;">
+                  <span style="color: var(--text-muted);">Dados de fonons nao gerados ou indisponiveis.</span>
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <section class="tab-panel" data-tab-panel="elastic">
+            <div class="detail-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.5rem; margin-top: 1rem;">
+              <article class="detail-card">
+                <h3>Matriz de Rigidez Elastica (C_ij em GPa)</h3>
+                <div id="elastic-matrix-container" style="margin-top: 1rem; overflow-x: auto; background: #0f172a; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); padding: 1rem;">
+                  <span style="color: var(--text-muted);">Dados de elasticidade nao calculados.</span>
+                </div>
+              </article>
+
+              <article class="detail-card">
+                <h3>Modulos Mecanicos Macroscopicos (Voigt)</h3>
+                <div id="elastic-moduli-container" style="margin-top: 1rem;">
+                  <span style="color: var(--text-muted);">Dados de elasticidade nao calculados.</span>
+                </div>
+              </article>
+            </div>
+          </section>
+
+          <section class="tab-panel" data-tab-panel="pipeline">
+            <div class="detail-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1.5rem; margin-top: 1rem;">
+              <article class="detail-card">
+                <h3>Encadeamento de Calculos (Pipeline)</h3>
+                <div style="margin-top: 1rem; display: flex; flex-direction: column; gap: 1rem;">
+                  <div style="font-size: 0.9rem; color: var(--text-muted); line-height: 1.4;">
+                    Selecione o workflow filho que sera iniciado automaticamente apos a convergencia deste calculo.
+                  </div>
+                  <div style="display: flex; gap: 0.5rem; align-items: center;">
+                    <select id="pipeline-child-select" style="flex: 1; background: #0f172a; border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 0.5rem; border-radius: 6px; outline: none;">
+                      <option value="">Nenhum (Fim do Fluxo)</option>
+                    </select>
+                    <button type="button" id="btn-save-pipeline" style="background: #6366f1; border: 1px solid #6366f1; color: #fff; padding: 0.5rem 1rem; border-radius: 6px; font-weight: 600; cursor: pointer; transition: all 0.2s;">
+                      Vincular
+                    </button>
+                  </div>
+                </div>
+              </article>
+
+              <article class="detail-card">
+                <h3>Fluxograma do Pipeline</h3>
+                <div id="pipeline-flow-container" style="margin-top: 1rem; padding: 1rem; background: #0f172a; border-radius: 8px; border: 1px solid rgba(255,255,255,0.05); min-height: 120px; display: flex; flex-direction: column; justify-content: center; align-items: center;">
+                  <span style="color: var(--text-muted);">Nenhum vinculo configurado.</span>
+                </div>
+              </article>
+            </div>
           </section>
         </div>
       </section>
     </main>
   </div>
 
+  <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/3Dmol/2.0.4/3Dmol-min.js"></script>
+  <script src="/static/structure_viewer.js"></script>
+  <script src="/static/dos_band_visualizer.js"></script>
+  <script src="/static/neb_visualizer.js"></script>
+  <script src="/static/phonon_visualizer.js"></script>
+  <script src="/static/elastic_visualizer.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

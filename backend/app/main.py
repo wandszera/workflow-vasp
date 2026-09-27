@@ -1,8 +1,11 @@
 from pathlib import Path
+from typing import Any
+import os
+import hmac
 import uuid
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .schemas import (
@@ -25,6 +28,7 @@ from .schemas import (
     WorkflowFileUpdateRequest,
     WorkflowCreateRequest,
     WorkflowResponse,
+    WorkflowImportRequest,
 )
 from .services.mock_cluster import MockClusterService
 from .services.cluster_config import ClusterConfig, load_cluster_config, save_cluster_config
@@ -64,10 +68,52 @@ workflow_service = WorkflowService(
     store=WorkflowStore(),
     executor_registry=executor_registry,
 )
+from .services.task_queue import TaskQueue
+task_queue = TaskQueue(
+    store=workflow_service.store,
+    agent=workflow_service.agent,
+    executor_registry=workflow_service.executor_registry,
+)
 cluster_session_secret: dict[str, str | None] = {"password": None}
 static_dir = Path(__file__).resolve().parent / "static"
 
+ALLOWED_BASE_DIRS = [
+    Path(__file__).resolve().parent / "mock_runs",
+    Path(__file__).resolve().parent / "remote_runs",
+    Path(__file__).resolve().parent / "mlff_runs",
+]
+
+
+def validate_calc_path(calc_path: str) -> Path:
+    resolved = Path(calc_path).expanduser().resolve()
+    for base_dir in ALLOWED_BASE_DIRS:
+        try:
+            resolved.relative_to(base_dir.resolve())
+            return resolved
+        except ValueError:
+            continue
+    raise HTTPException(status_code=400, detail=f"Caminho de calculo fora dos diretorios permitidos: {calc_path}")
+
+
+def validated_workflow_path(workflow: Any) -> Path:
+    return validate_calc_path(str(workflow.calc_path))
+
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+_PUBLIC_PATHS = {"/", "/health", "/analysis", "/cluster"}
+
+
+@app.middleware("http")
+async def require_api_key(request: Request, call_next):
+    configured_api_key = os.getenv("VASP_API_KEY", "")
+    if configured_api_key and request.url.path not in _PUBLIC_PATHS and not request.url.path.startswith("/static/"):
+        provided_api_key = request.headers.get("X-API-Key", "")
+        if not hmac.compare_digest(provided_api_key, configured_api_key):
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "API key invalida ou ausente. Envie o header X-API-Key."},
+            )
+    return await call_next(request)
 
 
 @app.get("/health")
@@ -163,9 +209,10 @@ def list_cluster_jobs(scope: str = Query(default="user", pattern="^(user|all)$")
 
 @app.post("/agent/inspect", response_model=AgentInspectionResponse)
 def inspect_calculation(payload: AgentInspectionRequest) -> AgentInspectionResponse:
+    validated_path = validate_calc_path(payload.calc_path)
     try:
         return agent.inspect(
-            calc_path=payload.calc_path,
+            calc_path=str(validated_path),
             goal=payload.goal,
             apply_fixes=payload.apply_fixes,
         )
@@ -209,7 +256,7 @@ def analyze_workflow(workflow_id: str) -> list[AnalysisResultEntry]:
         workflow = workflow_service.get_workflow(workflow_id)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return [AnalysisResultEntry(**entry) for entry in analysis_service.analyze_workflow(workflow.calc_path)]
+    return [AnalysisResultEntry(**entry) for entry in analysis_service.analyze_workflow(str(validated_workflow_path(workflow)), goal=workflow.goal)]
 
 
 @app.post("/analysis/binding-energy", response_model=BindingEnergyResponse)
@@ -271,7 +318,7 @@ def calculate_workflow_ecn(workflow_id: str) -> EcnResponse:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     try:
-        result = ecn_service.compute_from_poscar(Path(workflow.calc_path) / "POSCAR")
+        result = ecn_service.compute_from_poscar(validated_workflow_path(workflow) / "POSCAR")
     except (FileNotFoundError, ValueError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -297,7 +344,7 @@ def calculate_workflow_ecn(workflow_id: str) -> EcnResponse:
 
 
 def _build_recommendation_preview(workflow: WorkflowResponse) -> RecommendationPreviewEntry:
-    analysis_results = analysis_service.analyze_workflow(workflow.calc_path)
+    analysis_results = analysis_service.analyze_workflow(str(validated_workflow_path(workflow)), goal=workflow.goal)
     recommendation = next(
         (entry for entry in analysis_results if entry.get("tool") == "next_calculation_recommendation"),
         None,
@@ -327,7 +374,7 @@ def _build_recommendation_preview(workflow: WorkflowResponse) -> RecommendationP
     if recommended_step not in calc_type_map:
         raise HTTPException(status_code=409, detail=f"Recomendacao nao materializavel: {recommended_step}")
 
-    calc_path = Path(workflow.calc_path)
+    calc_path = validated_workflow_path(workflow)
     structure_source = None
     structure_origin = None
     for candidate in ["CONTCAR", "POSCAR"]:
@@ -373,8 +420,21 @@ def apply_workflow_recommendation(workflow_id: str) -> WorkflowResponse:
         derived_settings["structure_source"] = recommendation_preview.structure_source
 
     project_suffix = recommendation_preview.recommended_step.replace("_", "-")
-    derived_project_name = f"{workflow.project_name}-{project_suffix}-{str(uuid.uuid4())[:4]}"
-    return workflow_service.create_workflow(
+    base_name = workflow.project_name
+    triggers = [
+        "-expandir-dataset-mlff",
+        "-promover-mlff",
+        "-continuar-relaxacao",
+        "-revisar-relaxacao",
+        "-validar-artefatos",
+        "-rodar-dos",
+        "-rodar-phonons",
+    ]
+    for trigger in triggers:
+        if trigger in base_name:
+            base_name = base_name.split(trigger)[0]
+    derived_project_name = f"{base_name}-{project_suffix}-{str(uuid.uuid4())[:4]}"
+    child_wf = workflow_service.create_workflow(
         project_name=derived_project_name,
         executor_name=workflow.executor,
         scenario="running",
@@ -382,6 +442,9 @@ def apply_workflow_recommendation(workflow_id: str) -> WorkflowResponse:
         auto_apply_fixes=workflow.auto_apply_fixes,
         job_settings=derived_settings,
     )
+    workflow_service.store.add_chain_link(workflow_id, child_wf.workflow_id)
+    return child_wf
+
 
 
 @app.get("/workflows/{workflow_id}/files-preview", response_model=list[WorkflowFilePreviewEntry])
@@ -391,7 +454,7 @@ def get_workflow_file_previews(workflow_id: str) -> list[WorkflowFilePreviewEntr
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    calc_path = Path(workflow.calc_path)
+    calc_path = validated_workflow_path(workflow)
     preview_specs = {
         "INCAR": 120,
         "KPOINTS": 40,
@@ -468,6 +531,11 @@ def create_mock_workflow(payload: WorkflowCreateRequest) -> WorkflowResponse:
             "mlff_temperature_schedule": payload.mlff_temperature_schedule,
             "mlff_target_rmse": payload.mlff_target_rmse,
             "mlff_min_reference_count": payload.mlff_min_reference_count,
+            "ml_rcut1": payload.ml_rcut1,
+            "ml_rcut2": payload.ml_rcut2,
+            "ml_wforce": payload.ml_wforce,
+            "ml_wtoten": payload.ml_wtoten,
+            "ml_cdoub": payload.ml_cdoub,
         },
     )
 
@@ -475,6 +543,316 @@ def create_mock_workflow(payload: WorkflowCreateRequest) -> WorkflowResponse:
 @app.post("/workflows/{workflow_id}/advance", response_model=WorkflowResponse)
 def advance_workflow(workflow_id: str) -> WorkflowResponse:
     try:
-        return workflow_service.advance_workflow(workflow_id)
+        task_queue.submit_advance_task(workflow_id)
+        workflow_data = workflow_service.store.get_workflow(workflow_id)
+        return WorkflowResponse(**workflow_data)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/workflows/{workflow_id}/logs")
+def get_workflow_logs(workflow_id: str) -> dict[str, str]:
+    try:
+        logs = task_queue.read_logs(workflow_id)
+        return {"logs": logs}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/workflows/{workflow_id}/file/{filename:path}")
+def get_workflow_file(workflow_id: str, filename: str) -> FileResponse:
+    try:
+        workflow = workflow_service.get_workflow(workflow_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    calc_path = validate_calc_path(workflow.calc_path)
+    file_path = (calc_path / filename).resolve()
+    try:
+        file_path.relative_to(calc_path)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Caminho de arquivo invalido") from None
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"Arquivo {filename} nao encontrado no workflow.")
+    
+    return FileResponse(file_path)
+
+
+@app.get("/workflows/stats")
+def get_workflows_stats() -> dict[str, Any]:
+    try:
+        return workflow_service.store.get_stats()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/workflows/import", response_model=WorkflowResponse)
+def import_workflow(payload: WorkflowImportRequest) -> WorkflowResponse:
+    path = validate_calc_path(payload.calc_path)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"Caminho nao encontrado: {path}")
+
+    inspection = agent.inspect(str(path), goal=payload.goal, apply_fixes=False)
+
+    workflow_id = str(uuid.uuid4())
+    job_id = str(uuid.uuid4())
+
+    workflow = {
+        "workflow_id": workflow_id,
+        "project_name": payload.project_name,
+        "goal": payload.goal,
+        "executor": payload.executor,
+        "scenario": "success",
+        "auto_apply_fixes": False,
+        "job_id": job_id,
+        "calc_path": str(path),
+        "current_stage": 0,
+        "job_status": "converged" if inspection.status == "converged" else "running",
+        "agent_status": inspection.status,
+        "latest_summary": inspection.summary,
+        "latest_next_step": inspection.next_step,
+        "latest_results": inspection.extracted_results,
+        "execution_metadata": {
+            "executor": payload.executor,
+            "local_path": str(path),
+            "dry_run": True,
+            "workflow_stages": ["mlff_select", "mlff_train", "mlff_validate"] if payload.executor == "mlff_training" else ["relax"],
+            "current_stage_name": "mlff_validate" if payload.executor == "mlff_training" else "relax",
+        },
+        "job_settings": {},
+        "history": [
+            {
+                "step": 0,
+                "job_status": "converged" if inspection.status == "converged" else "running",
+                "agent_status": inspection.status,
+                "summary": inspection.summary,
+                "next_step": inspection.next_step,
+            }
+        ],
+    }
+
+    workflow_service.store.save_workflow(workflow)
+    return WorkflowResponse(**workflow)
+
+
+@app.post("/workflows/{workflow_id}/fix-poscar")
+def fix_poscar(workflow_id: str) -> dict[str, Any]:
+    try:
+        workflow = workflow_service.get_workflow(workflow_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    poscar_path = validated_workflow_path(workflow) / "POSCAR"
+    if not poscar_path.exists():
+        raise HTTPException(status_code=404, detail="Arquivo POSCAR nao encontrado no workflow.")
+
+    from .services.poscar_corrector import PoscarCorrector
+    res = PoscarCorrector.fix(poscar_path)
+    if not res["success"]:
+        raise HTTPException(status_code=500, detail=res["error"])
+
+    inspection = agent.inspect(str(validated_workflow_path(workflow)), goal=workflow.goal, apply_fixes=False)
+
+    w_data = workflow_service.store.get_workflow(workflow_id)
+    w_data["agent_status"] = inspection.status
+    w_data["latest_summary"] = inspection.summary
+    w_data["latest_next_step"] = inspection.next_step
+    w_data["latest_results"] = inspection.extracted_results
+    
+    history_entry = {
+        "step": w_data["current_stage"],
+        "job_status": w_data["job_status"],
+        "agent_status": inspection.status,
+        "summary": f"Correcao de colisoes aplicada. {inspection.summary}",
+        "next_step": inspection.next_step,
+    }
+    w_data["history"].append(history_entry)
+
+    workflow_service.store.save_workflow(w_data)
+
+    return {
+        "success": True,
+        "fixed": res["fixed"],
+        "backup": res["backup"],
+        "agent_status": inspection.status,
+        "summary": inspection.summary
+    }
+
+
+@app.post("/workflows/{workflow_id}/fix-incar")
+def fix_incar(workflow_id: str) -> dict[str, Any]:
+    try:
+        workflow = workflow_service.get_workflow(workflow_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    incar_path = validated_workflow_path(workflow) / "INCAR"
+    if not incar_path.exists():
+        raise HTTPException(status_code=404, detail="Arquivo INCAR nao encontrado no workflow.")
+
+    from .services.incar_validator import IncarValidator
+    res_val = IncarValidator.validate(incar_path, goal=workflow.goal)
+    if res_val["valid"]:
+        return {"success": True, "fixed": False, "message": "INCAR ja e valido."}
+
+    res_fix = IncarValidator.fix_tags(incar_path, res_val["missing_keys"])
+    if not res_fix["success"]:
+        raise HTTPException(status_code=500, detail=res_fix["error"])
+
+    inspection = agent.inspect(str(validated_workflow_path(workflow)), goal=workflow.goal, apply_fixes=False)
+
+    w_data = workflow_service.store.get_workflow(workflow_id)
+    w_data["agent_status"] = inspection.status
+    w_data["latest_summary"] = inspection.summary
+    w_data["latest_next_step"] = inspection.next_step
+    w_data["latest_results"] = inspection.extracted_results
+    
+    history_entry = {
+        "step": w_data["current_stage"],
+        "job_status": w_data["job_status"],
+        "agent_status": inspection.status,
+        "summary": f"Correcao automatica de tags do INCAR aplicada. {inspection.summary}",
+        "next_step": inspection.next_step,
+    }
+    w_data["history"].append(history_entry)
+
+    workflow_service.store.save_workflow(w_data)
+
+    return {
+        "success": True,
+        "fixed": True,
+        "backup": res_fix["backup"],
+        "agent_status": inspection.status,
+        "summary": inspection.summary
+    }
+
+
+@app.post("/workflows/{workflow_id}/fix-kpoints")
+def fix_kpoints(workflow_id: str) -> dict[str, Any]:
+    try:
+        workflow = workflow_service.get_workflow(workflow_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    calc_path = validated_workflow_path(workflow)
+    kpoints_path = calc_path / "KPOINTS"
+    poscar_path = calc_path / "POSCAR"
+    
+    if not poscar_path.exists():
+        raise HTTPException(status_code=404, detail="Arquivo POSCAR nao encontrado no workflow para estimar a malha.")
+
+    from .services.poscar_validator import PoscarValidator
+    pos_res = PoscarValidator.validate(poscar_path)
+    lattice_lengths = pos_res.get("lattice_lengths")
+    
+    if not lattice_lengths or lattice_lengths == (0.0, 0.0, 0.0):
+        raise HTTPException(status_code=400, detail="Nao foi possivel ler os vetores de rede do POSCAR.")
+
+    from .services.kpoints_validator import KpointsValidator
+    
+    a, b, c = lattice_lengths
+    sug_nx = max(1, round(35.0 / a)) if a > 0 else 1
+    sug_ny = max(1, round(35.0 / b)) if b > 0 else 1
+    sug_nz = max(1, round(35.0 / c)) if c > 0 else 1
+    suggested_mesh = (sug_nx, sug_ny, sug_nz)
+
+    res_fix = KpointsValidator.generate_kpoints(kpoints_path, suggested_mesh)
+    if not res_fix["success"]:
+        raise HTTPException(status_code=500, detail=res_fix["error"])
+
+    inspection = agent.inspect(str(calc_path), goal=workflow.goal, apply_fixes=False)
+
+    w_data = workflow_service.store.get_workflow(workflow_id)
+    w_data["agent_status"] = inspection.status
+    w_data["latest_summary"] = inspection.summary
+    w_data["latest_next_step"] = inspection.next_step
+    w_data["latest_results"] = inspection.extracted_results
+    
+    history_entry = {
+        "step": w_data["current_stage"],
+        "job_status": w_data["job_status"],
+        "agent_status": inspection.status,
+        "summary": f"Geracao automatica de malha KPOINTS ({suggested_mesh[0]}x{suggested_mesh[1]}x{suggested_mesh[2]}) aplicada. {inspection.summary}",
+        "next_step": inspection.next_step,
+    }
+    w_data["history"].append(history_entry)
+
+    workflow_service.store.save_workflow(w_data)
+
+    return {
+        "success": True,
+        "fixed": True,
+        "backup": res_fix["backup"],
+        "agent_status": inspection.status,
+        "summary": inspection.summary
+    }
+
+
+@app.get("/workflows/{workflow_id}/neb-data")
+def get_neb_data(workflow_id: str) -> dict[str, Any]:
+    try:
+        workflow = workflow_service.get_workflow(workflow_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    from .services.neb_parser import NebParser
+    data = NebParser.get_neb_data(str(validated_workflow_path(workflow)))
+    if data is None:
+        raise HTTPException(status_code=404, detail="Dados de NEB nao encontrados ou nao convergidos.")
+    return data
+
+
+@app.get("/workflows/{workflow_id}/phonon-data")
+def get_phonon_data(workflow_id: str) -> dict[str, Any]:
+    try:
+        workflow = workflow_service.get_workflow(workflow_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    from .services.phonon_parser import PhononParser
+    data = PhononParser.get_phonon_data(str(validated_workflow_path(workflow)))
+    if data is None:
+        raise HTTPException(status_code=404, detail="Dados de fonons nao encontrados ou nao calculados.")
+    return data
+
+
+@app.get("/workflows/{workflow_id}/elastic-data")
+def get_elastic_data(workflow_id: str) -> dict[str, Any]:
+    try:
+        workflow = workflow_service.get_workflow(workflow_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    from .services.elastic_parser import ElasticParser
+    data = ElasticParser.get_elastic_data(str(validated_workflow_path(workflow)))
+    if data is None:
+        raise HTTPException(status_code=404, detail="Dados elasticos nao encontrados ou nao calculados.")
+    return data
+
+
+@app.post("/workflows/{workflow_id}/chain-with/{child_id}")
+def chain_workflows(workflow_id: str, child_id: str) -> dict[str, Any]:
+    try:
+        workflow_service.get_workflow(workflow_id)
+        workflow_service.get_workflow(child_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    workflow_service.store.add_chain_link(workflow_id, child_id)
+    return {"success": True, "parent_id": workflow_id, "child_id": child_id}
+
+
+@app.get("/workflows/{workflow_id}/child")
+def get_child_workflow(workflow_id: str) -> dict[str, Any]:
+    child_id = workflow_service.store.get_child_id(workflow_id)
+    if not child_id:
+        return {"has_child": False, "child_id": None}
+
+    try:
+        child = workflow_service.get_workflow(child_id)
+        return {"has_child": True, "child_id": child_id, "project_name": child.project_name, "job_status": child.job_status}
+    except FileNotFoundError:
+        return {"has_child": False, "child_id": None}
+
+
+
