@@ -98,11 +98,44 @@ class MockClusterService:
         self._materialize_stage(calc_dir, metadata)
         return self._build_response(calc_dir, metadata)
 
+    def resubmit_job(self, job_id: str) -> ExecutionJob:
+        calc_dir = self._find_calc_dir(job_id)
+        metadata = self._read_metadata(calc_dir)
+        self._materialize_stage(calc_dir, metadata)
+        return self._build_response(calc_dir, metadata)
+
     def _find_calc_dir(self, job_id: str) -> Path:
         for metadata_path in self.base_dir.glob("*/mock_job.json"):
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
             if metadata.get("job_id") == job_id:
                 return metadata_path.parent
+
+        # Fallback: check SQLite database for workflow's calc_path
+        try:
+            from .sqlite_workflow_store import WorkflowStore
+            store = WorkflowStore()
+            for wf in store.list_workflows():
+                if wf.get("job_id") == job_id:
+                    calc_path = Path(wf["calc_path"])
+                    metadata_path = calc_path / "mock_job.json"
+                    if not metadata_path.exists():
+                        metadata = {
+                            "job_id": job_id,
+                            "project_name": wf.get("project_name", "imported_mock"),
+                            "scenario": wf.get("scenario", "success"),
+                            "goal": wf.get("goal"),
+                            "stage": wf.get("current_stage", 0),
+                            "job_settings": wf.get("job_settings", {}),
+                            "workflow_stages": self._build_workflow_stages(wf.get("goal"), wf.get("job_settings", {})),
+                            "current_workflow_stage": wf.get("current_stage", 0),
+                            "current_stage_name": "relax"
+                        }
+                        calc_path.mkdir(parents=True, exist_ok=True)
+                        metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+                    return calc_path
+        except Exception:
+            pass
+
         raise FileNotFoundError(f"Mock job nao encontrado: {job_id}")
 
     def _apply_mock_handoff(self, calc_dir: Path, metadata: dict[str, object]) -> None:
@@ -227,8 +260,61 @@ class MockClusterService:
             oszicar_content = " 1 F= -.12345 E0= -.12000 d E =-.001\n"
 
         elif scenario == "zbrent_error" and stage == 0:
-            outcar_content = " ZBRENT: fatal error in bracketing\n"
-            oszicar_content = " 8 F= -.19875 E0= -.19000 d E =-.0002\n"
+            from .vasp_parser import parse_incar
+            incar = parse_incar(calc_dir / "INCAR")
+            if incar.get("POTIM") == "0.15":
+                outcar_content = (
+                    " reached required accuracy \n"
+                    " free  energy   TOTEN  =      -21.4300 eV\n"
+                    " number of electron    20.000 magnetization =      2.0000\n"
+                )
+                oszicar_content = " 14 F= -21.4300 E0= -21.4000 d E =-.0001\n"
+                (calc_dir / "CHGCAR").write_text("Mock charge density\n", encoding="utf-8")
+                (calc_dir / "CONTCAR").write_text(
+                    "CONTCAR structure\n1.0\n1 0 0\n0 1 0\n0 0 1\nH\n1\nDirect\n0.05 0.0 0.0\n",
+                    encoding="utf-8",
+                )
+            else:
+                outcar_content = " ZBRENT: fatal error in bracketing\n"
+                oszicar_content = " 8 F= -.19875 E0= -.19000 d E =-.0002\n"
+
+        elif scenario == "brmix_error" and stage == 0:
+            from .vasp_parser import parse_incar
+            incar = parse_incar(calc_dir / "INCAR")
+            if incar.get("AMIX") == "0.2" or incar.get("BMIX") == "0.0001":
+                outcar_content = (
+                    " reached required accuracy \n"
+                    " free  energy   TOTEN  =      -21.4300 eV\n"
+                    " number of electron    20.000 magnetization =      2.0000\n"
+                )
+                oszicar_content = " 14 F= -21.4300 E0= -21.4000 d E =-.0001\n"
+                (calc_dir / "CHGCAR").write_text("Mock charge density\n", encoding="utf-8")
+                (calc_dir / "CONTCAR").write_text(
+                    "CONTCAR structure\n1.0\n1 0 0\n0 1 0\n0 0 1\nH\n1\nDirect\n0.05 0.0 0.0\n",
+                    encoding="utf-8",
+                )
+            else:
+                outcar_content = " BRMIX: very serious problems, the mixing instability\n"
+                oszicar_content = " 3 F= -.19875 E0= -.19000 d E =-.0002\n"
+
+        elif scenario == "edddav_error" and stage == 0:
+            from .vasp_parser import parse_incar
+            incar = parse_incar(calc_dir / "INCAR")
+            if incar.get("ALGO") == "Normal" and incar.get("LREAL") == ".FALSE.":
+                outcar_content = (
+                    " reached required accuracy \n"
+                    " free  energy   TOTEN  =      -21.4300 eV\n"
+                    " number of electron    20.000 magnetization =      2.0000\n"
+                )
+                oszicar_content = " 14 F= -21.4300 E0= -21.4000 d E =-.0001\n"
+                (calc_dir / "CHGCAR").write_text("Mock charge density\n", encoding="utf-8")
+                (calc_dir / "CONTCAR").write_text(
+                    "CONTCAR structure\n1.0\n1 0 0\n0 1 0\n0 0 1\nH\n1\nDirect\n0.05 0.0 0.0\n",
+                    encoding="utf-8",
+                )
+            else:
+                outcar_content = " EDDDAV: Call to ZHEGV failed\n"
+                oszicar_content = " 1 F= -.19875 E0= -.19000 d E =-.0002\n"
 
         # MLFF logs mock
         if calc_type == "mlff_training" or "mlff" in calc_type or "mlff" in goal.lower():
@@ -257,7 +343,7 @@ class MockClusterService:
     def _build_response(self, calc_dir: Path, metadata: dict[str, object]) -> ExecutionJob:
         scenario = str(metadata["scenario"])
         stage = int(metadata["stage"])
-        status = self._infer_status(scenario, stage)
+        status = self._infer_status(calc_dir, scenario, stage)
 
         stages = metadata.get("workflow_stages", [])
         stage_names = [st.get("name", "") for st in stages]
@@ -279,10 +365,17 @@ class MockClusterService:
         )
 
     @staticmethod
-    def _infer_status(scenario: str, stage: int) -> str:
+    def _infer_status(calc_dir: Path, scenario: str, stage: int) -> str:
+        outcar_path = calc_dir / "OUTCAR"
+        if outcar_path.exists():
+            content = outcar_path.read_text(encoding="utf-8", errors="ignore")
+            if "reached required accuracy" in content:
+                return "converged"
+            if "ZBRENT" in content or "mixing instability" in content or "EDDDAV" in content or "serious problems" in content:
+                return "failed"
         if scenario == "running" and stage == 0:
             return "running"
-        if scenario == "zbrent_error" and stage == 0:
+        if scenario in {"zbrent_error", "brmix_error", "edddav_error"} and stage == 0:
             return "failed"
         return "converged"
 

@@ -29,9 +29,27 @@ class VaspWorkflowAgent:
         detected_errors: list[str] = []
         suggested_fixes: list[SuggestedFix] = []
 
-        raw_text = "\n".join(
-            text for text in [str(outcar.get("raw_text", "")), str(oszicar.get("raw_text", ""))] if text
-        )
+        log_texts = []
+        if outcar.get("raw_text"):
+            log_texts.append(str(outcar.get("raw_text")))
+        if oszicar.get("raw_text"):
+            log_texts.append(str(oszicar.get("raw_text")))
+
+        vasp_out_path = root / "vasp.out"
+        if vasp_out_path.exists():
+            try:
+                log_texts.append(vasp_out_path.read_text(encoding="utf-8", errors="ignore"))
+            except Exception:
+                pass
+
+        for slurm_file in root.glob("slurm-*.out"):
+            if slurm_file.is_file():
+                try:
+                    log_texts.append(slurm_file.read_text(encoding="utf-8", errors="ignore"))
+                except Exception:
+                    pass
+
+        raw_text = "\n".join(text for text in log_texts if text)
 
         status = self._infer_status(incar, outcar, oszicar, ml_log)
 

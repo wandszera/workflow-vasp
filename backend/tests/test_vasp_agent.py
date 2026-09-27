@@ -155,7 +155,7 @@ class VaspAnalysisServiceTests(unittest.TestCase):
 
         results = self.service.analyze_workflow(str(calc_dir))
 
-        self.assertEqual(len(results), 10)
+        self.assertEqual(len(results), 17)
         energy_summary = next(result for result in results if result["tool"] == "energy_summary")
         structure_diff = next(result for result in results if result["tool"] == "structure_diff")
         recommendation = next(result for result in results if result["tool"] == "next_calculation_recommendation")
@@ -732,15 +732,15 @@ class SshSlurmExecutorTests(unittest.TestCase):
             goal="geometry optimization",
         )
 
-        # 1. Assegurar que o comando de execucao real contem a senha bruta passada ao subprocesso
+        # 1. Assegurar que a senha nao aparece nos argumentos do processo
         self.assertTrue(len(executed_commands) > 0)
         self.assertEqual(executed_commands[0][0], "sshpass")
-        self.assertEqual(executed_commands[0][1], "-p")
-        self.assertEqual(executed_commands[0][2], "minha_senha_super_secreta_123")
+        self.assertEqual(executed_commands[0][1], "-e")
+        self.assertNotIn("minha_senha_super_secreta_123", executed_commands[0])
 
         # 2. Assegurar que o plan local REMOTE_PLAN.txt enmascara a senha
         plan_content = Path(job.calc_path, "REMOTE_PLAN.txt").read_text(encoding="utf-8")
-        self.assertIn("sshpass -p ******", plan_content)
+        self.assertIn("sshpass -e", plan_content)
         self.assertNotIn("minha_senha_super_secreta_123", plan_content)
 
         # 3. Assegurar que o command_log.json enmascara a senha
@@ -748,8 +748,7 @@ class SshSlurmExecutorTests(unittest.TestCase):
         log_data = json.loads(log_content)
         self.assertTrue(len(log_data) > 0)
         self.assertEqual(log_data[0]["command"][0], "sshpass")
-        self.assertEqual(log_data[0]["command"][1], "-p")
-        self.assertEqual(log_data[0]["command"][2], "******")
+        self.assertEqual(log_data[0]["command"][1], "-e")
         self.assertNotIn("minha_senha_super_secreta_123", log_content)
 
 

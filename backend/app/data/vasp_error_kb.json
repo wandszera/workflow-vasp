@@ -37,5 +37,18 @@
         }
       }
     ]
+  },
+  {
+    "error": "EDDDAV ZHEGV failed",
+    "triggers": ["edddav: call to zhegv failed", "edddav"],
+    "actions": [
+      {
+        "description": "Ajustar ALGO para Normal e desativar projecoes em espaco real (LREAL=.FALSE.).",
+        "updates": {
+          "ALGO": "Normal",
+          "LREAL": ".FALSE."
+        }
+      }
+    ]
   }
 ]

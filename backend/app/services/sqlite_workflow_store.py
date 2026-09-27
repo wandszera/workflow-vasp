@@ -30,16 +30,64 @@ class WorkflowStore:
                     job_status,
                     agent_status,
                     latest_summary,
-                    latest_next_step,
-                    latest_results,
-                    job_settings,
-                    execution_metadata
+                    latest_next_step
                 FROM workflows
-                ORDER BY updated_at DESC, rowid DESC
+                ORDER BY updated_at DESC, workflow_id DESC
                 """
             ).fetchall()
 
-        return [self._row_to_workflow(row) for row in rows]
+            workflows = []
+            for row in rows:
+                w_id = row["workflow_id"]
+                
+                # Fetch results
+                res_rows = connection.execute("SELECT key, value FROM workflow_results WHERE workflow_id = ?", (w_id,)).fetchall()
+                latest_results = {}
+                for r in res_rows:
+                    try:
+                        latest_results[r["key"]] = json.loads(r["value"])
+                    except Exception:
+                        latest_results[r["key"]] = r["value"]
+
+                # Fetch settings
+                set_rows = connection.execute("SELECT key, value FROM workflow_settings WHERE workflow_id = ?", (w_id,)).fetchall()
+                job_settings = {}
+                for r in set_rows:
+                    try:
+                        job_settings[r["key"]] = json.loads(r["value"])
+                    except Exception:
+                        job_settings[r["key"]] = r["value"]
+
+                # Fetch metadata
+                meta_rows = connection.execute("SELECT key, value FROM workflow_metadata WHERE workflow_id = ?", (w_id,)).fetchall()
+                execution_metadata = {}
+                for r in meta_rows:
+                    try:
+                        execution_metadata[r["key"]] = json.loads(r["value"])
+                    except Exception:
+                        execution_metadata[r["key"]] = r["value"]
+
+                w_dict = {
+                    "workflow_id": row["workflow_id"],
+                    "project_name": row["project_name"],
+                    "goal": row["goal"],
+                    "executor": row["executor"],
+                    "scenario": row["scenario"],
+                    "auto_apply_fixes": bool(row["auto_apply_fixes"]),
+                    "job_id": row["job_id"],
+                    "calc_path": row["calc_path"],
+                    "current_stage": row["current_stage"],
+                    "job_status": row["job_status"],
+                    "agent_status": row["agent_status"],
+                    "latest_summary": row["latest_summary"],
+                    "latest_next_step": row["latest_next_step"],
+                    "latest_results": latest_results,
+                    "job_settings": job_settings,
+                    "execution_metadata": execution_metadata,
+                    "history": []
+                }
+                workflows.append(w_dict)
+            return workflows
 
     def get_workflow(self, workflow_id: str) -> dict[str, Any]:
         with self._connect() as connection:
@@ -58,10 +106,7 @@ class WorkflowStore:
                     job_status,
                     agent_status,
                     latest_summary,
-                    latest_next_step,
-                    latest_results,
-                    job_settings,
-                    execution_metadata
+                    latest_next_step
                 FROM workflows
                 WHERE workflow_id = ?
                 """,
@@ -70,6 +115,33 @@ class WorkflowStore:
 
             if row is None:
                 raise FileNotFoundError(f"Workflow nao encontrado: {workflow_id}")
+
+            # Fetch results
+            res_rows = connection.execute("SELECT key, value FROM workflow_results WHERE workflow_id = ?", (workflow_id,)).fetchall()
+            latest_results = {}
+            for r in res_rows:
+                try:
+                    latest_results[r["key"]] = json.loads(r["value"])
+                except Exception:
+                    latest_results[r["key"]] = r["value"]
+
+            # Fetch settings
+            set_rows = connection.execute("SELECT key, value FROM workflow_settings WHERE workflow_id = ?", (workflow_id,)).fetchall()
+            job_settings = {}
+            for r in set_rows:
+                try:
+                    job_settings[r["key"]] = json.loads(r["value"])
+                except Exception:
+                    job_settings[r["key"]] = r["value"]
+
+            # Fetch metadata
+            meta_rows = connection.execute("SELECT key, value FROM workflow_metadata WHERE workflow_id = ?", (workflow_id,)).fetchall()
+            execution_metadata = {}
+            for r in meta_rows:
+                try:
+                    execution_metadata[r["key"]] = json.loads(r["value"])
+                except Exception:
+                    execution_metadata[r["key"]] = r["value"]
 
             history_rows = connection.execute(
                 """
@@ -81,12 +153,30 @@ class WorkflowStore:
                 (workflow_id,),
             ).fetchall()
 
-        workflow = self._row_to_workflow(row)
-        workflow["history"] = [dict(history_row) for history_row in history_rows]
-        return workflow
+        w_dict = {
+            "workflow_id": row["workflow_id"],
+            "project_name": row["project_name"],
+            "goal": row["goal"],
+            "executor": row["executor"],
+            "scenario": row["scenario"],
+            "auto_apply_fixes": bool(row["auto_apply_fixes"]),
+            "job_id": row["job_id"],
+            "calc_path": row["calc_path"],
+            "current_stage": row["current_stage"],
+            "job_status": row["job_status"],
+            "agent_status": row["agent_status"],
+            "latest_summary": row["latest_summary"],
+            "latest_next_step": row["latest_next_step"],
+            "latest_results": latest_results,
+            "job_settings": job_settings,
+            "execution_metadata": execution_metadata,
+            "history": [dict(history_row) for history_row in history_rows]
+        }
+        return w_dict
 
     def save_workflow(self, workflow: dict[str, Any]) -> dict[str, Any]:
         history = workflow.get("history", [])
+        w_id = workflow["workflow_id"]
         with self._connect() as connection:
             connection.execute(
                 """
@@ -104,11 +194,8 @@ class WorkflowStore:
                     agent_status,
                     latest_summary,
                     latest_next_step,
-                    latest_results,
-                    job_settings,
-                    execution_metadata,
                     updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(workflow_id) DO UPDATE SET
                     project_name = excluded.project_name,
                     goal = excluded.goal,
@@ -122,13 +209,10 @@ class WorkflowStore:
                     agent_status = excluded.agent_status,
                     latest_summary = excluded.latest_summary,
                     latest_next_step = excluded.latest_next_step,
-                    latest_results = excluded.latest_results,
-                    job_settings = excluded.job_settings,
-                    execution_metadata = excluded.execution_metadata,
                     updated_at = CURRENT_TIMESTAMP
                 """,
                 (
-                    workflow["workflow_id"],
+                    w_id,
                     workflow["project_name"],
                     workflow["goal"],
                     workflow.get("executor", "mock"),
@@ -141,13 +225,34 @@ class WorkflowStore:
                     workflow["agent_status"],
                     workflow["latest_summary"],
                     workflow["latest_next_step"],
-                    json.dumps(workflow["latest_results"]),
-                    json.dumps(workflow.get("job_settings", {})),
-                    json.dumps(workflow.get("execution_metadata", {})),
                 ),
             )
 
-            connection.execute("DELETE FROM workflow_history WHERE workflow_id = ?", (workflow["workflow_id"],))
+            # Update results
+            connection.execute("DELETE FROM workflow_results WHERE workflow_id = ?", (w_id,))
+            for key, val in workflow.get("latest_results", {}).items():
+                connection.execute(
+                    "INSERT INTO workflow_results (workflow_id, key, value) VALUES (?, ?, ?)",
+                    (w_id, key, json.dumps(val))
+                )
+
+            # Update settings
+            connection.execute("DELETE FROM workflow_settings WHERE workflow_id = ?", (w_id,))
+            for key, val in workflow.get("job_settings", {}).items():
+                connection.execute(
+                    "INSERT INTO workflow_settings (workflow_id, key, value) VALUES (?, ?, ?)",
+                    (w_id, key, json.dumps(val))
+                )
+
+            # Update metadata
+            connection.execute("DELETE FROM workflow_metadata WHERE workflow_id = ?", (w_id,))
+            for key, val in workflow.get("execution_metadata", {}).items():
+                connection.execute(
+                    "INSERT INTO workflow_metadata (workflow_id, key, value) VALUES (?, ?, ?)",
+                    (w_id, key, json.dumps(val))
+                )
+
+            connection.execute("DELETE FROM workflow_history WHERE workflow_id = ?", (w_id,))
             connection.executemany(
                 """
                 INSERT INTO workflow_history (
@@ -161,7 +266,7 @@ class WorkflowStore:
                 """,
                 [
                     (
-                        workflow["workflow_id"],
+                        w_id,
                         entry["step"],
                         entry["job_status"],
                         entry["agent_status"],
@@ -174,8 +279,48 @@ class WorkflowStore:
             connection.commit()
         return workflow
 
+    def get_stats(self) -> dict[str, any]:
+        with self._connect() as connection:
+            total_workflows = connection.execute("SELECT COUNT(*) FROM workflows").fetchone()[0] or 0
+            running_workflows = connection.execute("SELECT COUNT(*) FROM workflows WHERE job_status = 'running'").fetchone()[0] or 0
+            failed_workflows = connection.execute("SELECT COUNT(*) FROM workflows WHERE job_status = 'failed' OR agent_status = 'failed'").fetchone()[0] or 0
+            converged_workflows = connection.execute("SELECT COUNT(*) FROM workflows WHERE agent_status = 'converged'").fetchone()[0] or 0
+            
+            avg_steps_row = connection.execute(
+                """
+                SELECT AVG(CAST(value AS INTEGER))
+                FROM workflow_results
+                WHERE key = 'ionic_steps'
+                """
+            ).fetchone()
+            avg_ionic_steps = round(avg_steps_row[0], 1) if avg_steps_row and avg_steps_row[0] is not None else 0.0
+
+            return {
+                "total_workflows": total_workflows,
+                "running_workflows": running_workflows,
+                "failed_workflows": failed_workflows,
+                "converged_workflows": converged_workflows,
+                "avg_ionic_steps": avg_ionic_steps
+            }
+
     def _initialize(self) -> None:
         with self._connect() as connection:
+            # Check if workflows table exists
+            table_exists = connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='workflows'"
+            ).fetchone()
+            
+            needs_migration = False
+            if table_exists:
+                # Check if it has JSON columns
+                columns = {row["name"] for row in connection.execute("PRAGMA table_info(workflows)").fetchall()}
+                if "latest_results" in columns:
+                    needs_migration = True
+
+            if needs_migration:
+                connection.execute("ALTER TABLE workflows RENAME TO workflows_old")
+
+            # Create new tables
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS workflows (
@@ -192,10 +337,34 @@ class WorkflowStore:
                     agent_status TEXT NOT NULL,
                     latest_summary TEXT NOT NULL,
                     latest_next_step TEXT NOT NULL,
-                    latest_results TEXT NOT NULL,
-                    job_settings TEXT NOT NULL DEFAULT '{}',
-                    execution_metadata TEXT NOT NULL DEFAULT '{}',
                     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+
+                CREATE TABLE IF NOT EXISTS workflow_results (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    workflow_id TEXT NOT NULL,
+                    key TEXT NOT NULL,
+                    value TEXT,
+                    FOREIGN KEY(workflow_id) REFERENCES workflows(workflow_id) ON DELETE CASCADE,
+                    UNIQUE(workflow_id, key)
+                );
+
+                CREATE TABLE IF NOT EXISTS workflow_settings (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    workflow_id TEXT NOT NULL,
+                    key TEXT NOT NULL,
+                    value TEXT,
+                    FOREIGN KEY(workflow_id) REFERENCES workflows(workflow_id) ON DELETE CASCADE,
+                    UNIQUE(workflow_id, key)
+                );
+
+                CREATE TABLE IF NOT EXISTS workflow_metadata (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    workflow_id TEXT NOT NULL,
+                    key TEXT NOT NULL,
+                    value TEXT,
+                    FOREIGN KEY(workflow_id) REFERENCES workflows(workflow_id) ON DELETE CASCADE,
+                    UNIQUE(workflow_id, key)
                 );
 
                 CREATE TABLE IF NOT EXISTS workflow_history (
@@ -208,17 +377,114 @@ class WorkflowStore:
                     next_step TEXT NOT NULL,
                     FOREIGN KEY(workflow_id) REFERENCES workflows(workflow_id) ON DELETE CASCADE
                 );
+
+                CREATE TABLE IF NOT EXISTS workflow_chains (
+                    parent_id TEXT NOT NULL,
+                    child_id TEXT NOT NULL,
+                    PRIMARY KEY (parent_id, child_id)
+                );
                 """
             )
-            existing_columns = {
-                row["name"] for row in connection.execute("PRAGMA table_info(workflows)").fetchall()
-            }
-            if "executor" not in existing_columns:
-                connection.execute("ALTER TABLE workflows ADD COLUMN executor TEXT NOT NULL DEFAULT 'mock'")
-            if "execution_metadata" not in existing_columns:
-                connection.execute("ALTER TABLE workflows ADD COLUMN execution_metadata TEXT NOT NULL DEFAULT '{}'")
-            if "job_settings" not in existing_columns:
-                connection.execute("ALTER TABLE workflows ADD COLUMN job_settings TEXT NOT NULL DEFAULT '{}'")
+
+            if needs_migration:
+                old_rows = connection.execute(
+                    """
+                    SELECT
+                        workflow_id,
+                        project_name,
+                        goal,
+                        executor,
+                        scenario,
+                        auto_apply_fixes,
+                        job_id,
+                        calc_path,
+                        current_stage,
+                        job_status,
+                        agent_status,
+                        latest_summary,
+                        latest_next_step,
+                        latest_results,
+                        job_settings,
+                        execution_metadata,
+                        updated_at
+                    FROM workflows_old
+                    """
+                ).fetchall()
+
+                for row in old_rows:
+                    w_id = row["workflow_id"]
+                    connection.execute(
+                        """
+                        INSERT INTO workflows (
+                            workflow_id,
+                            project_name,
+                            goal,
+                            executor,
+                            scenario,
+                            auto_apply_fixes,
+                            job_id,
+                            calc_path,
+                            current_stage,
+                            job_status,
+                            agent_status,
+                            latest_summary,
+                            latest_next_step,
+                            updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            w_id,
+                            row["project_name"],
+                            row["goal"],
+                            row["executor"],
+                            row["scenario"],
+                            row["auto_apply_fixes"],
+                            row["job_id"],
+                            row["calc_path"],
+                            row["current_stage"],
+                            row["job_status"],
+                            row["agent_status"],
+                            row["latest_summary"],
+                            row["latest_next_step"],
+                            row["updated_at"],
+                        )
+                    )
+
+                    # Migrate results
+                    try:
+                        results = json.loads(row["latest_results"])
+                        for k, v in results.items():
+                            connection.execute(
+                                "INSERT OR REPLACE INTO workflow_results (workflow_id, key, value) VALUES (?, ?, ?)",
+                                (w_id, k, json.dumps(v))
+                            )
+                    except Exception:
+                        pass
+
+                    # Migrate settings
+                    try:
+                        settings = json.loads(row["job_settings"])
+                        for k, v in settings.items():
+                            connection.execute(
+                                "INSERT OR REPLACE INTO workflow_settings (workflow_id, key, value) VALUES (?, ?, ?)",
+                                (w_id, k, json.dumps(v))
+                            )
+                    except Exception:
+                        pass
+
+                    # Migrate metadata
+                    try:
+                        metadata = json.loads(row["execution_metadata"])
+                        for k, v in metadata.items():
+                            connection.execute(
+                                "INSERT OR REPLACE INTO workflow_metadata (workflow_id, key, value) VALUES (?, ?, ?)",
+                                (w_id, k, json.dumps(v))
+                            )
+                    except Exception:
+                        pass
+
+                connection.execute("DROP TABLE workflows_old")
+            
             connection.commit()
 
     def _connect(self) -> sqlite3.Connection:
@@ -232,7 +498,7 @@ class WorkflowStore:
             "workflow_id": row["workflow_id"],
             "project_name": row["project_name"],
             "goal": row["goal"],
-            "executor": row["executor"] if "executor" in row.keys() else "mock",
+            "executor": row["executor"],
             "scenario": row["scenario"],
             "auto_apply_fixes": bool(row["auto_apply_fixes"]),
             "job_id": row["job_id"],
@@ -242,8 +508,24 @@ class WorkflowStore:
             "agent_status": row["agent_status"],
             "latest_summary": row["latest_summary"],
             "latest_next_step": row["latest_next_step"],
-            "latest_results": json.loads(row["latest_results"]),
-            "job_settings": json.loads(row["job_settings"]) if "job_settings" in row.keys() else {},
-            "execution_metadata": json.loads(row["execution_metadata"]) if "execution_metadata" in row.keys() else {},
+            "latest_results": {},
+            "job_settings": {},
+            "execution_metadata": {},
             "history": [],
         }
+
+    def add_chain_link(self, parent_id: str, child_id: str) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "INSERT OR REPLACE INTO workflow_chains (parent_id, child_id) VALUES (?, ?)",
+                (parent_id, child_id)
+            )
+            connection.commit()
+
+    def get_child_id(self, parent_id: str) -> str | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT child_id FROM workflow_chains WHERE parent_id = ?",
+                (parent_id,)
+            ).fetchone()
+            return row["child_id"] if row else None

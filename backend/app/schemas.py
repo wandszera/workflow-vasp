@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, Any
 
 from pydantic import BaseModel, Field
 
-MetadataValue = str | float | int | bool | None | list[str] | list[int]
+MetadataValue = str | float | int | bool | None | list[str] | list[int] | dict[str, Any] | list[dict[str, Any]] | list[Any]
 
 
 class AgentInspectionRequest(BaseModel):
@@ -116,6 +116,12 @@ class WorkflowCreateRequest(BaseModel):
         default=None,
         description="Numero minimo de estruturas de referencia antes da validacao final.",
     )
+    ml_rcut1: float | None = Field(default=None, description="ML_RCUT1 parameter.")
+    ml_rcut2: float | None = Field(default=None, description="ML_RCUT2 parameter.")
+    ml_wforce: float | None = Field(default=None, description="ML_WFORCE parameter.")
+    ml_wtoten: float | None = Field(default=None, description="ML_WTOTEN parameter.")
+    ml_cdoub: float | None = Field(default=None, description="ML_CDOUB parameter.")
+
 
 
 class WorkflowHistoryEntry(BaseModel):
@@ -253,3 +259,14 @@ class WorkflowResponse(BaseModel):
     job_settings: dict[str, MetadataValue]
     execution_metadata: dict[str, MetadataValue]
     history: list[WorkflowHistoryEntry]
+
+
+class WorkflowImportRequest(BaseModel):
+    project_name: str = Field(..., description="Nome do workflow importado.")
+    calc_path: str = Field(..., description="Caminho absoluto do diretorio local a ser importado.")
+    goal: str = Field(..., description="Objetivo do calculo.")
+    executor: Literal["mock", "ssh_slurm", "mlff_training"] = Field(
+        default="mlff_training",
+        description="Executor associado.",
+    )
+

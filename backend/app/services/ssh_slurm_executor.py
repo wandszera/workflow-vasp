@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import uuid
@@ -51,6 +52,17 @@ class SshSlurmExecutor:
         ]
     }
 
+    _SAFE_PROJECT_NAME = re.compile(r"^[a-zA-Z0-9_.-]+$")
+
+    @classmethod
+    def _sanitize_project_name(cls, name: str) -> str:
+        clean = name.strip()
+        if not clean or not cls._SAFE_PROJECT_NAME.fullmatch(clean):
+            raise ValueError("Nome de projeto invalido: use apenas letras, numeros, hifens, underscores e pontos.")
+        if len(clean) > 100:
+            raise ValueError("Nome de projeto muito longo (maximo: 100 caracteres)")
+        return clean
+
     def __init__(
         self,
         base_dir: Path | None = None,
@@ -94,6 +106,7 @@ class SshSlurmExecutor:
         goal: str | None = None,
         job_settings: dict[str, object] | None = None,
     ) -> ExecutionJob:
+        project_name = self._sanitize_project_name(project_name)
         job_id = str(uuid.uuid4())
         calc_dir = self.base_dir / f"{project_name}_{job_id[:8]}"
         calc_dir.mkdir(parents=True, exist_ok=False)
@@ -173,6 +186,16 @@ class SshSlurmExecutor:
         self._execute_or_plan(calc_dir, metadata, stage=int(metadata["stage"]))
         return self._build_job(calc_dir, metadata)
 
+    def resubmit_job(self, job_id: str) -> ExecutionJob:
+        calc_dir = self._find_calc_dir(job_id)
+        metadata = self._read_metadata(calc_dir)
+        metadata["scheduler_state"] = "PENDING_LOCAL_PREP"
+        metadata["scheduler_job_id"] = None
+        self._write_metadata(calc_dir, metadata)
+        self._materialize_stage(calc_dir, metadata)
+        self._execute_or_plan(calc_dir, metadata, stage=int(metadata["stage"]))
+        return self._build_job(calc_dir, metadata)
+
     def _find_calc_dir(self, job_id: str) -> Path:
         for metadata_path in self.base_dir.glob("*/remote_job.json"):
             metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
@@ -185,10 +208,38 @@ class SshSlurmExecutor:
         stage = int(metadata["stage"])
         stage_name = str(metadata.get("current_stage_name") or "relax")
         if stage == 0:
-            (calc_dir / "OSZICAR").write_text(" 1 F= -.10000 E0= -.09900 d E =-.001\n", encoding="utf-8")
+            (calc_dir / "OSZICAR").write_text(" 1 F= -25.0000 E0= -25.0000 d E =-.001\n", encoding="utf-8")
             (calc_dir / "vasp.out").write_text(f"Submitting {stage_name} VASP job through SLURM...\n", encoding="utf-8")
             if scenario == "zbrent_error":
-                (calc_dir / "OUTCAR").write_text(" ZBRENT: fatal error in bracketing\n", encoding="utf-8")
+                from .vasp_parser import parse_incar
+                incar = parse_incar(calc_dir / "INCAR")
+                if incar.get("POTIM") == "0.15":
+                    (calc_dir / "OUTCAR").write_text(
+                        " reached required accuracy \n free  energy   TOTEN  =      -25.0000 eV\n",
+                        encoding="utf-8",
+                    )
+                else:
+                    (calc_dir / "OUTCAR").write_text(" ZBRENT: fatal error in bracketing\n", encoding="utf-8")
+            elif scenario == "brmix_error":
+                from .vasp_parser import parse_incar
+                incar = parse_incar(calc_dir / "INCAR")
+                if incar.get("AMIX") == "0.2" or incar.get("BMIX") == "0.0001":
+                    (calc_dir / "OUTCAR").write_text(
+                        " reached required accuracy \n free  energy   TOTEN  =      -25.0000 eV\n",
+                        encoding="utf-8",
+                    )
+                else:
+                    (calc_dir / "OUTCAR").write_text(" BRMIX: very serious problems, the mixing instability\n", encoding="utf-8")
+            elif scenario == "edddav_error":
+                from .vasp_parser import parse_incar
+                incar = parse_incar(calc_dir / "INCAR")
+                if incar.get("ALGO") == "Normal" and incar.get("LREAL") == ".FALSE.":
+                    (calc_dir / "OUTCAR").write_text(
+                        " reached required accuracy \n free  energy   TOTEN  =      -25.0000 eV\n",
+                        encoding="utf-8",
+                    )
+                else:
+                    (calc_dir / "OUTCAR").write_text(" EDDDAV: Call to ZHEGV failed\n", encoding="utf-8")
             elif scenario in {"running"}:
                 if (calc_dir / "OUTCAR").exists():
                     (calc_dir / "OUTCAR").unlink()
@@ -204,7 +255,7 @@ class SshSlurmExecutor:
                 " number of electron    32.000 magnetization =      0.0000\n",
                 encoding="utf-8",
             )
-            (calc_dir / "OSZICAR").write_text(" 14 F= -.25800 E0= -.25000 d E =-.0001\n", encoding="utf-8")
+            (calc_dir / "OSZICAR").write_text(" 14 F= -25.8000 E0= -25.8000 d E =-.0001\n", encoding="utf-8")
             (calc_dir / "CONTCAR").write_text(
                 "Generated converged structure\n1.0\n1 0 0\n0 1 0\n0 0 1\nH\n1\nDirect\n0 0 0\n",
                 encoding="utf-8",
@@ -216,7 +267,7 @@ class SshSlurmExecutor:
     def _build_job(self, calc_dir: Path, metadata: dict[str, object]) -> ExecutionJob:
         scenario = str(metadata["scenario"])
         stage = int(metadata["stage"])
-        status = self._infer_status(scenario, stage, str(metadata.get("scheduler_state") or ""))
+        status = self._infer_status(calc_dir, scenario, stage, str(metadata.get("scheduler_state") or ""))
         return ExecutionJob(
             job_id=str(metadata["job_id"]),
             calc_path=str(calc_dir),
@@ -247,7 +298,14 @@ class SshSlurmExecutor:
         )
 
     @staticmethod
-    def _infer_status(scenario: str, stage: int, scheduler_state: str) -> str:
+    def _infer_status(calc_dir: Path, scenario: str, stage: int, scheduler_state: str) -> str:
+        outcar_path = calc_dir / "OUTCAR"
+        if outcar_path.exists():
+            content = outcar_path.read_text(encoding="utf-8", errors="ignore")
+            if "reached required accuracy" in content:
+                return "converged"
+            if "ZBRENT" in content or "mixing instability" in content or "EDDDAV" in content or "serious problems" in content:
+                return "failed"
         normalized_state = scheduler_state.upper()
         if normalized_state in {"RUNNING", "PENDING", "SUBMITTED"}:
             return "running"
@@ -257,7 +315,7 @@ class SshSlurmExecutor:
             return "converged"
         if scenario == "running" and stage == 0:
             return "running"
-        if scenario == "zbrent_error" and stage == 0:
+        if scenario in {"zbrent_error", "brmix_error", "edddav_error"} and stage == 0:
             return "failed"
         return "converged"
 
@@ -346,8 +404,8 @@ class SshSlurmExecutor:
             scp_prefix.extend(["-i", identity_file])
             
         if password:
-            ssh_prefix = ["sshpass", "-p", password] + ssh_prefix
-            scp_prefix = ["sshpass", "-p", password] + scp_prefix
+            ssh_prefix = ["sshpass", "-e"] + ssh_prefix
+            scp_prefix = ["sshpass", "-e"] + scp_prefix
 
         upload_files = ["INCAR", "POSCAR", "KPOINTS", "submit_vasp.slurm", "job_manifest.json"]
         remote_path_quoted = f'"{remote_path}"'
@@ -392,7 +450,7 @@ class SshSlurmExecutor:
             ssh_prefix.extend(["-i", self.config.identity_file])
             
         if password:
-            ssh_prefix = ["sshpass", "-p", password] + ssh_prefix
+            ssh_prefix = ["sshpass", "-e"] + ssh_prefix
 
         queue_scope = "-u $USER" if scope == "user" else ""
         return [
@@ -634,6 +692,10 @@ class SshSlurmExecutor:
             raise ValueError("kpoints_mesh deve ser uma lista de inteiros.")
         return [int(item) for item in value]
 
-    @staticmethod
-    def _run_command(command: list[str], workdir: Path):
-        return subprocess.run(command, cwd=workdir, capture_output=True, text=True, check=False)
+    def _run_command(self, command: list[str], workdir: Path):
+        env = os.environ.copy()
+        # sshpass -e reads the secret from SSHPASS instead of exposing it in argv.
+        password = self.password_provider() if self.password_provider else None
+        if password:
+            env["SSHPASS"] = password
+        return subprocess.run(command, cwd=workdir, capture_output=True, text=True, check=False, env=env)
