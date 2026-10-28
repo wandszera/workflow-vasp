@@ -4,4 +4,5 @@ pydantic>=2.8.0,<3.0.0
 httpx>=0.28.0,<1.0.0
 numpy>=1.24.0
 matplotlib>=3.7.0
+langgraph>=1.0.0,<2.0.0
 

@@ -36,6 +36,59 @@ class AgentInspectionResponse(BaseModel):
     next_step: str
 
 
+class EvidenceCitation(BaseModel):
+    document_id: str
+    title: str
+    source: str
+    excerpt: str
+    score: float = Field(ge=0.0)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class GroundedDiagnosisRequest(BaseModel):
+    calc_path: str = Field(..., description="Diretorio do calculo VASP a diagnosticar.")
+    goal: str | None = Field(default=None, description="Objetivo cientifico do calculo.")
+    top_k: int = Field(default=5, ge=1, le=10)
+
+
+class GroundedDiagnosisResponse(BaseModel):
+    diagnosis_id: str
+    calc_path: str
+    status: Literal["awaiting_approval", "insufficient_evidence", "approved", "rejected"]
+    failure_class: Literal["electronic_convergence", "ionic_or_structural", "resources_or_slurm", "converged", "unknown"]
+    hypothesis: str
+    confidence: Literal["low", "medium", "high"]
+    limitations: list[str]
+    recommendations: list[str]
+    citations: list[EvidenceCitation]
+    safety_checks: list[str]
+    graph_trace: list[str]
+    human_decision: str | None = None
+    human_note: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class DiagnosisDecisionRequest(BaseModel):
+    approved: bool
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class KnowledgeDocumentRequest(BaseModel):
+    document_id: str | None = Field(default=None, min_length=3, max_length=160)
+    title: str = Field(min_length=3, max_length=300)
+    source: str = Field(min_length=3, max_length=500)
+    text: str = Field(min_length=20, max_length=100_000)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class KnowledgeDocumentResponse(BaseModel):
+    document_id: str
+    title: str
+    source: str
+    metadata: dict[str, Any]
+
+
 class MockJobCreateRequest(BaseModel):
     project_name: str = Field(..., description="Nome curto do experimento local.")
     scenario: Literal["success", "zbrent_error", "running", "dos_ready"] = Field(
