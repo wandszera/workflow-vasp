@@ -1,0 +1,37 @@
+[
+  {
+    "id": "local-zbrent-001",
+    "title": "Regra validada: falha ZBRENT em relaxacao ionica",
+    "source": "curated://workflow-vasp/vasp_error_kb",
+    "text": "A assinatura ZBRENT: fatal error durante relaxacao indica instabilidade no passo ionico. A acao local validada e reduzir POTIM e avaliar IBRION=1. A geometria deve ser inspecionada antes de uma nova submissao.",
+    "metadata": {"failure_class": "ionic_or_structural", "calculation_type": "relax", "error": "zbrent", "validated": true, "document_version": "1"}
+  },
+  {
+    "id": "local-brmix-001",
+    "title": "Regra validada: instabilidade de mistura BRMIX",
+    "source": "curated://workflow-vasp/vasp_error_kb",
+    "text": "BRMIX e very serious problems sao evidencias de instabilidade de mistura eletronica. A regra local sugere ALGO=Normal, AMIX=0.2 e BMIX=0.0001, sempre com revisao humana e comparacao com o INCAR original.",
+    "metadata": {"failure_class": "electronic_convergence", "calculation_type": "any", "error": "brmix", "validated": true, "document_version": "1"}
+  },
+  {
+    "id": "local-edddav-001",
+    "title": "Regra validada: EDDDAV/ZHEGV",
+    "source": "curated://workflow-vasp/vasp_error_kb",
+    "text": "EDDDAV: Call to ZHEGV failed e uma falha numerica ligada a diagonalizacao. A regra local recomenda testar ALGO=Normal e LREAL=.FALSE. Nenhuma alteracao deve ser aplicada sem aprovacao.",
+    "metadata": {"failure_class": "electronic_convergence", "calculation_type": "any", "error": "edddav", "validated": true, "document_version": "1"}
+  },
+  {
+    "id": "local-convergence-001",
+    "title": "Politica de convergencia e evidencia insuficiente",
+    "source": "policy://workflow-vasp/scientific-safety",
+    "text": "Uma recomendacao so pode ser apresentada como fundamentada quando a assinatura observada aparece nas evidencias recuperadas. Na ausencia de evidencia compativel, o sistema deve declarar evidencia insuficiente, preservar os arquivos e solicitar revisao humana.",
+    "metadata": {"failure_class": "unknown", "calculation_type": "any", "validated": true, "document_version": "1"}
+  },
+  {
+    "id": "local-slurm-oom-001",
+    "title": "Triagem local: memoria insuficiente no SLURM",
+    "source": "curated://workflow-vasp/slurm-notes",
+    "text": "Mensagens OUT_OF_MEMORY, oom-kill, exceeded memory limit ou bad_alloc indicam falha de recursos. Verifique MaxRSS, memoria solicitada, numero de ranks e tamanho do sistema. Mudancas de recursos devem ser aprovadas pelo operador do cluster.",
+    "metadata": {"failure_class": "resources_or_slurm", "calculation_type": "any", "error": "out_of_memory", "validated": true, "document_version": "1"}
+  }
+]

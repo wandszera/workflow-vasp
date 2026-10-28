@@ -19,7 +19,7 @@ export VASP_API_KEY="sua-chave-secreta-aqui"
 This project implements:
 - **FastAPI API:** Unified interface for workflow control, cluster monitoring, physical analysis, and agent recommendations.
 - **Graphical Interface (Dashboards):** Three CSS-rich panels to monitor workflows, manage clusters, and run physics and geometry analyses.
-- **Expert Agent (VASP Agent):** Engine based on heuristics and a JSON knowledge base to analyze outputs (`OUTCAR`, `OSZICAR`, `INCAR`) and detect convergence or failures (e.g., numerical error `zbrent`, electronic convergence issues, etc.).
+- **Grounded Scientific Agent:** Combines the existing deterministic VASP heuristics with a LangGraph diagnostic workflow, hybrid retrieval, cited evidence, safety validation, human approval, and an auditable decision history.
 - **History Persistence:** Local SQLite database saving logs, job metadata, configurations, and execution timelines.
 - **Three Calculation Executors:**
   - `mock`: Staged local simulation without requiring a cluster.
@@ -35,8 +35,8 @@ This project implements:
 workflow-vasp/
 ├── backend/
 │   ├── app/
-│   │   ├── data/                 # SQLite (workflows.db), config.json, VASP error KB (Knowledge Base)
-│   │   ├── services/             # Business logic (agent, analyzer, parser, templates, ECN, executors)
+│   │   ├── data/                 # SQLite stores, cluster config and RAG/heuristic knowledge bases
+│   │   ├── services/             # Agent, RAG, LangGraph, parsers, validators and executors
 │   │   ├── static/               # Frontend Web Interface (HTML, CSS, JS)
 │   │   ├── templates/            # Internal default VASP templates
 │   │   ├── mlff_runs/            # Local execution directories for MLFF training
@@ -163,3 +163,86 @@ The agent not only detects problems but also allows interacting with them:
 - **Multi-user Persistence:** Replace the local SQLite database (`workflows.db`) with a structured PostgreSQL image when scaling the system for collaborative laboratory use.
 - **Semantic POSCAR Validator:** Prevent remote submissions if the POSCAR contains overlapping atoms or simulation box inconsistency.
 - **Interactive Visualizations:** Add 3D crystal structure visualization (`POSCAR` / `CONTCAR`) in the frontend using JS/Three.js or similar libraries.
+
+---
+
+## 🧠 Diagnóstico fundamentado com RAG + LangGraph
+
+O backend inclui um MVP auditável que preserva o agente heurístico e adiciona uma camada de diagnóstico fundamentado. O fluxo coleta `INCAR`, `OUTCAR`, `OSZICAR` e logs SLURM, classifica a falha, recupera evidências compatíveis por texto e metadados, gera uma hipótese, executa barreiras de segurança e aguarda decisão humana.
+
+O grafo possui os nós `coletar_arquivos`, `classificar_falha`, `buscar_documentacao`, `buscar_casos_similares`, `gerar_hipoteses`, `validar_recomendacoes` e `solicitar_aprovacao_humana`. As decisões são persistidas em `backend/app/data/diagnoses.db` para auditoria.
+
+Endpoints principais:
+
+- `POST /knowledge/documents`: ingere documentação permitida, notas ou casos anonimizados com metadados;
+- `POST /diagnoses`: executa o diagnóstico sem alterar arquivos nem submeter jobs;
+- `GET /diagnoses/{diagnosis_id}`: recupera hipótese, limitações, citações e trilha do grafo;
+- `POST /diagnoses/{diagnosis_id}/decision`: aprova ou rejeita a recomendação e registra feedback.
+
+Estados possíveis do diagnóstico:
+
+- `awaiting_approval`: há evidência compatível e a recomendação aguarda revisão humana;
+- `insufficient_evidence`: a base não sustenta uma recomendação segura;
+- `approved`: a hipótese foi aceita, sem aplicação automática de mudanças;
+- `rejected`: a hipótese foi rejeitada e o feedback foi preservado para auditoria.
+
+### Ingestão e diagnóstico pela API
+
+Ingestão de uma anotação ou caso validado:
+
+```bash
+curl -X POST http://127.0.0.1:8000/knowledge/documents \
+  -H "Content-Type: application/json" \
+  -d '{
+    "document_id": "lab-brmix-001",
+    "title": "Caso validado de instabilidade BRMIX",
+    "source": "case://laboratorio/brmix-001",
+    "text": "O caso apresentou BRMIX e convergiu depois da revisão da mistura eletrônica.",
+    "metadata": {
+      "failure_class": "electronic_convergence",
+      "calculation_type": "relax",
+      "vasp_version": "6.x",
+      "validated": true,
+      "document_version": "1"
+    }
+  }'
+```
+
+Criação de um diagnóstico:
+
+```bash
+curl -X POST http://127.0.0.1:8000/diagnoses \
+  -H "Content-Type: application/json" \
+  -d '{
+    "calc_path": "C:/.../backend/app/mock_runs/meu-calculo",
+    "goal": "relax geometry",
+    "top_k": 5
+  }'
+```
+
+Registro da decisão humana:
+
+```bash
+curl -X POST http://127.0.0.1:8000/diagnoses/DIAGNOSIS_ID/decision \
+  -H "Content-Type: application/json" \
+  -d '{"approved": true, "note": "Evidências revisadas pelo pesquisador."}'
+```
+
+A base inicial em `backend/app/data/rag_knowledge.json` contém somente regras locais identificadas como tal; ela não redistribui documentação proprietária. O recuperador local é um baseline híbrido lexical + metadados e expõe uma interface substituível por Qdrant ou pgvector. Quando não encontra evidência compatível, o diagnóstico recebe `insufficient_evidence` e não pode ser aprovado.
+
+### Limites de segurança do MVP
+
+- o diagnóstico nunca edita `INCAR`, `KPOINTS` ou estruturas;
+- aprovação não aplica mudanças nem submete jobs automaticamente;
+- aplicação e submissão continuam sendo ações separadas, protegidas pelos validadores existentes;
+- documentos devem registrar fonte, versão e metadados técnicos antes de uso em produção.
+
+Próximas etapas recomendadas: embeddings com avaliação top-k, um adaptador de LLM com saída estruturada, checkpointer durável do LangGraph, conjunto de 20–30 casos rotulados e métricas de recuperação, diagnóstico, grounding, aceitação, latência e custo.
+
+### Verificação
+
+```bash
+python -m pytest backend/tests -q
+```
+
+Estado atual: **87 testes automatizados passando**, incluindo recuperação por metadados, diagnóstico fundamentado, bloqueio por evidência insuficiente e persistência de feedback humano.

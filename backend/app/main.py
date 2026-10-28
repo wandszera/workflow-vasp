@@ -20,6 +20,11 @@ from .schemas import (
     ClusterConfigUpdateRequest,
     ClusterJobEntry,
     EcnResponse,
+    DiagnosisDecisionRequest,
+    GroundedDiagnosisRequest,
+    GroundedDiagnosisResponse,
+    KnowledgeDocumentRequest,
+    KnowledgeDocumentResponse,
     MockJobCreateRequest,
     MockJobResponse,
     RecommendationPreviewEntry,
@@ -38,6 +43,7 @@ from .services.mlff_training_executor import MlffTrainingExecutor
 from .services.ssh_slurm_executor import SshSlurmExecutor
 from .services.vasp_agent import VaspWorkflowAgent
 from .services.vasp_analysis_service import VaspAnalysisService
+from .services.diagnosis_graph import GroundedDiagnosisGraph
 from .services.sqlite_workflow_store import WorkflowStore
 from .services.workflow_service import WorkflowService
 
@@ -49,6 +55,7 @@ app = FastAPI(
 )
 
 agent = VaspWorkflowAgent()
+diagnosis_graph = GroundedDiagnosisGraph(agent=agent)
 analysis_service = VaspAnalysisService()
 ecn_service = EcnService()
 mock_cluster = MockClusterService()
@@ -218,6 +225,61 @@ def inspect_calculation(payload: AgentInspectionRequest) -> AgentInspectionRespo
         )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/diagnoses", response_model=GroundedDiagnosisResponse)
+def create_grounded_diagnosis(payload: GroundedDiagnosisRequest) -> GroundedDiagnosisResponse:
+    validated_path = validate_calc_path(payload.calc_path)
+    try:
+        result = diagnosis_graph.diagnose(
+            calc_path=str(validated_path),
+            goal=payload.goal,
+            top_k=payload.top_k,
+        )
+        return GroundedDiagnosisResponse(**result)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/diagnoses/{diagnosis_id}", response_model=GroundedDiagnosisResponse)
+def get_grounded_diagnosis(diagnosis_id: str) -> GroundedDiagnosisResponse:
+    try:
+        return GroundedDiagnosisResponse(**diagnosis_graph.store.get(diagnosis_id))
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/diagnoses/{diagnosis_id}/decision", response_model=GroundedDiagnosisResponse)
+def decide_grounded_diagnosis(
+    diagnosis_id: str, payload: DiagnosisDecisionRequest
+) -> GroundedDiagnosisResponse:
+    try:
+        result = diagnosis_graph.store.decide(diagnosis_id, payload.approved, payload.note)
+        return GroundedDiagnosisResponse(**result)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/knowledge/documents", response_model=KnowledgeDocumentResponse, status_code=201)
+def ingest_knowledge_document(payload: KnowledgeDocumentRequest) -> KnowledgeDocumentResponse:
+    try:
+        document = diagnosis_graph.retriever.add_document(
+            document_id=payload.document_id,
+            title=payload.title,
+            source=payload.source,
+            text=payload.text,
+            metadata=payload.metadata,
+        )
+        return KnowledgeDocumentResponse(
+            document_id=str(document["id"]),
+            title=str(document["title"]),
+            source=str(document["source"]),
+            metadata=dict(document["metadata"]),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @app.post("/mock/jobs", response_model=MockJobResponse)
