@@ -30,6 +30,10 @@ backend/app/mock_runs/
 backend/app/mlff_runs/
 backend/app/remote_runs/
 
+# VASP pseudopotentials are licensed and must not be redistributed
+POTCAR
+POTCAR.*
+
 # IDE / Editor configuration
 .vscode/
 .idea/
