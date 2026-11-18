@@ -49,3 +49,15 @@ POTCAR.*
 ._*
 Thumbs.db
 ehthumbs.db
+
+# VASP outputs (research data, large): keep only inputs in templates
+backend/templates/**/OUTCAR
+backend/templates/**/vasprun.xml
+backend/templates/**/PROCAR
+backend/templates/**/DOSCAR
+backend/templates/**/EIGENVAL
+backend/templates/**/CHG*
+backend/templates/**/WAVECAR
+backend/templates/**/XDATCAR
+backend/templates/**/OSZICAR
+backend/templates/**/*.eps
