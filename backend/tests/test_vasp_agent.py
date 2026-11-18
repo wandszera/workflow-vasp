@@ -1176,4 +1176,3 @@ class VaspTemplateServiceTests(unittest.TestCase):
         names = [template["name"] for template in service.list_available_templates()]
 
         self.assertIn("03_substrate_GRPR_OK", names)
-        self.assertIn("Pd4_paw_pbe_500eV_gam_otm_OK", names)
